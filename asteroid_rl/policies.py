@@ -13,11 +13,11 @@ import numpy as np
 
 
 def scripted_action(obs) -> np.ndarray:
-    """Choose throttle with a simple braking heuristic.
+    """Choose throttle with an altitude-aware braking heuristic.
 
-    Interprets the 5-D observation as altitude proxy, radial vertical velocity,
-    distance to target, speed, and previous throttle. Thrust is increased when
-    closing speed is high and eased when nearer/slower.
+    Interprets the 5-D observation as altitude above terrain, inertial
+    ``v_z``, distance to the surface site, speed, and previous throttle.
+    Thrust increases when descending quickly and eases near a soft touchdown.
 
     Args:
         obs: Environment observation array of shape ``(5,)``. Expected layout is
@@ -26,15 +26,22 @@ def scripted_action(obs) -> np.ndarray:
     Returns:
         A length-1 ``float32`` array containing throttle in ``[0, 1]``.
     """
-    _altitude, vertical_velocity, distance, speed, _previous_throttle = obs
-    if vertical_velocity < -1.0:
-        throttle = 1.0
-    elif vertical_velocity < -0.5:
-        throttle = 0.75
-    elif distance < 20.0 and speed > 0.75:
-        throttle = 0.65
+    altitude, vertical_velocity, _distance, speed, _previous_throttle = obs
+    descent_rate = -float(vertical_velocity)  # positive when falling
+
+    if altitude < 6.0 and speed <= 0.75:
+        throttle = 0.15
+    elif altitude < 10.0:
+        throttle = 1.0 if descent_rate > 0.5 or speed > 0.9 else 0.55
+    elif altitude < 25.0:
+        throttle = 1.0 if descent_rate > 1.0 or speed > 1.5 else 0.45
+    elif altitude < 60.0:
+        throttle = 0.85 if descent_rate > 1.5 or speed > 2.0 else 0.25
+    elif descent_rate > 2.0 or speed > 2.5:
+        throttle = 0.7
     else:
-        throttle = 0.25
+        # Coast for most of the long approach so the camera sees the asteroid.
+        throttle = 0.0
     return np.array([throttle], dtype=np.float32)
 
 

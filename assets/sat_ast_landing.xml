@@ -1,5 +1,6 @@
 <mujoco>
 	<option gravity="0 0 0"/>
+	<compiler meshdir="Itokawa"/>
 
 	<default class="main">
 		<default class="panel">
@@ -16,8 +17,10 @@
 
 	<worldbody>
 		<body name="hub">
-			<freejoint/>
+			<freejoint name="hub"/>
 			<site name="hub_origin"/>
+			<!-- Side-mounted navcam (matches Basilisk instrument mount; avoids thruster plume). -->
+			<camera name="navcam" pos="0 1.5 -0.8" xyaxes="1 0 0 0 1 0" fovy="60"/>
 
 			<geom name="hub_box" type="box" size="1 1 1" rgba="1 0 0 0.5" density="200"/>
 

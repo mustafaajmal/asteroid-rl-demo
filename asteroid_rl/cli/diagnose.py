@@ -18,7 +18,7 @@ def diagnose(df: pd.DataFrame) -> str:
 
     Args:
         df: Episode log with columns including ``termination_reason``,
-            ``distance``, and ``speed``. May be empty.
+            ``altitude`` (optional), ``distance``, and ``speed``. May be empty.
 
     Returns:
         Short human-readable diagnosis string such as ``"success"``,
@@ -32,13 +32,22 @@ def diagnose(df: pd.DataFrame) -> str:
     final_distance = float(df["distance"].iloc[-1])
     initial_distance = float(df["distance"].iloc[0])
     final_speed = float(df["speed"].iloc[-1])
+    final_altitude = (
+        float(df["altitude"].iloc[-1]) if "altitude" in df.columns else None
+    )
+    initial_altitude = (
+        float(df["altitude"].iloc[0]) if "altitude" in df.columns else None
+    )
 
     if termination_reason == "safe_landing":
         return "success"
     if termination_reason == "crash":
-        return "high-speed impact near target"
+        return "high-speed impact near surface"
     if termination_reason == "escaped":
         return "moved too far from target"
+    if initial_altitude is not None and final_altitude is not None:
+        if final_altitude > initial_altitude * 0.9:
+            return "policy did not descend meaningfully toward the surface"
     if final_distance > initial_distance * 0.9:
         return "policy did not make meaningful progress toward target"
     if final_speed > 2.0:
@@ -76,6 +85,8 @@ def main() -> None:
 
     print(f"Policy: {policy}")
     print(f"Episode length: {len(df)}")
+    if "altitude" in df.columns:
+        print(f"Final altitude: {float(df['altitude'].iloc[-1]):.4f}")
     print(f"Final distance: {float(df['distance'].iloc[-1]):.4f}")
     print(f"Final speed: {float(df['speed'].iloc[-1]):.4f}")
     print(f"Total reward: {float(df['reward'].sum()):.4f}")

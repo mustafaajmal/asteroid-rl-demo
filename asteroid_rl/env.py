@@ -1,13 +1,15 @@
 """Fixed-site asteroid landing Gymnasium environment backed by Basilisk/MuJoCo.
 
 Builds the Itokawa landing scene, exposes a scalar throttle action, returns
-truth-state numerical observations, and computes a shaped reward. Optional
-Vizard live-streaming is supported for evaluation playback.
+truth-state numerical observations (altitude above terrain, etc.), and computes
+a shaped reward. Optional Vizard live-streaming and a Basilisk body-fixed
+instrument camera (Vizard OpNav images) are supported for evaluation /
+perception prototyping.
 
 Scope of this module:
-    - Fixed target proxy and (by default) fixed initial state
+    - Fixed surface landing site and (by default) fixed initial state
     - No Scenic randomization of the full scenario graph
-    - No VLM / camera perception
+    - No VLM reasoning (camera frames only)
     - No full BSK-RL class hierarchy
 """
 
@@ -30,6 +32,8 @@ from Basilisk.simulation import svIntegrators
 from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, macros
 from Basilisk.utilities import vizSupport
+
+from asteroid_rl.surface import default_landing_site, get_surface_map
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _ASSETS_DIR = os.path.join(_REPO_ROOT, "assets")
@@ -58,15 +62,20 @@ ASTEROID_BODY_NAME = "asteroid"
 THRUSTER_NAME = "thrust"
 THRUSTER_LOCATION = [0.0, 0.0, -1.0]
 THRUSTER_DIRECTION = [0.0, 0.0, 1.0]
-THRUSTER_VIZ_SCALE = 100.0
+# Keep modest: scale 100 filled the instrument FOV with exhaust and hid the asteroid.
+THRUSTER_VIZ_SCALE = 8.0
 ASTEROID_VIZ_SCALE = 1000.0
 SIM_DT = 0.02
 SIM_PROCESS_NAME = "asteroid_rl"
 SIM_TASK_NAME = "asteroid_rl"
 
-DEFAULT_TARGET = (0.0, 0.0, -150.0)
-DEFAULT_INITIAL_POSITION = (0.0, 0.0, 0.0)
-DEFAULT_INITIAL_VELOCITY = (0.0, 0.0, -1.0)
+# Surface point under the approach axis (not the asteroid body origin).
+DEFAULT_TARGET = default_landing_site()
+# Start farther out so the nav camera can frame the asteroid early in the approach.
+DEFAULT_INITIAL_POSITION = (0.0, 0.0, 120.0)
+DEFAULT_INITIAL_VELOCITY = (0.0, 0.0, -1.5)
+# Approximate hub height above terrain when landing legs touch (~box + leg).
+NOMINAL_GEAR_CLEARANCE_M = 2.5
 
 
 class ConstantGravity(sysModel.SysModel):
@@ -197,13 +206,18 @@ class LandingEnvConfig:
         max_thrust: Peak thruster force in Newtons corresponding to throttle 1.0.
         control_dt: Wall-clock control period between policy actions, seconds.
         time_limit: Episode horizon in seconds before truncation.
-        target_position_N: Landing target proxy in the inertial frame, meters.
-        success_radius: Max distance for ``safe_landing``, meters.
+        target_position_N: Surface landing site in the inertial frame, meters.
+        success_altitude: Max hub altitude above terrain for ``safe_landing``, m.
+        min_success_altitude: Min hub altitude for ``safe_landing`` (avoid counting
+            deep mesh penetration as success), meters.
         success_speed: Max speed for ``safe_landing``, m/s.
-        crash_radius: Distance band used with ``crash_speed`` for crashes, meters.
-        crash_speed: Speed above which near-target contact counts as crash, m/s.
-        escape_radius: Distance at which the episode ends as escaped, meters.
-        progress_weight: Reward weight on reduction in distance-to-target.
+        success_lateral: Max horizontal distance from the site for success, m.
+        crash_altitude: Altitude band used with ``crash_speed`` for crashes, m.
+        crash_speed: Speed above which a near-surface state counts as crash, m/s.
+        penetration_altitude: Altitude below which the episode is a crash, m.
+        escape_radius: Distance from the site at which the episode ends escaped, m.
+        progress_weight: Reward weight on reduction in distance-to-site.
+        altitude_progress_weight: Extra reward weight on altitude reduction.
         speed_weight: Penalty weight on speed magnitude.
         fuel_weight: Penalty weight on squared throttle.
         success_bonus: Terminal reward added on safe landing.
@@ -216,27 +230,43 @@ class LandingEnvConfig:
         seed: Default RNG seed used when ``reset`` is not given an explicit seed.
         reuse_sim: If True, soft-reset one Basilisk sim across episodes.
         enable_viz: If True, attach Vizard liveStream when building the sim.
+        enable_camera: If True, attach a Basilisk hub instrument camera (needs Vizard).
+        camera_width: Instrument-camera image width in pixels.
+        camera_height: Instrument-camera image height in pixels.
         randomize_initial_distance: Perturb start distance along approach axis.
         initial_distance_delta: Half-range for distance randomization, meters.
         randomize_initial_vertical_velocity: Perturb approach-axis velocity.
         initial_vertical_velocity_delta: Half-range for velocity randomization, m/s.
         randomize_lateral_offset: Perturb start position in the lateral plane.
         lateral_offset_delta: Half-range for each lateral axis, meters.
+        success_radius: Deprecated alias retained for older callers; unused when
+            surface termination is active.
+        crash_radius: Deprecated alias retained for older callers; unused when
+            surface termination is active.
     """
 
     max_thrust: float = 275.0
     control_dt: float = 0.25
-    time_limit: float = 70.0
+    # Longer horizon matches the farther initial approach (~150 m range).
+    time_limit: float = 180.0
 
     target_position_N: Tuple[float, float, float] = DEFAULT_TARGET
 
-    success_radius: float = 5.0
+    success_altitude: float = 5.0
+    min_success_altitude: float = 0.5
     success_speed: float = 0.75
-    crash_radius: float = 5.0
+    success_lateral: float = 20.0
+    crash_altitude: float = 5.0
     crash_speed: float = 2.0
+    penetration_altitude: float = 0.0
     escape_radius: float = 1000.0
 
+    # Backward-compatible unused aliases (body-origin era).
+    success_radius: float = 5.0
+    crash_radius: float = 5.0
+
     progress_weight: float = 5.0
+    altitude_progress_weight: float = 2.0
     speed_weight: float = 0.05
     fuel_weight: float = 0.01
     success_bonus: float = 100.0
@@ -255,6 +285,11 @@ class LandingEnvConfig:
     # Live Vizard visualization (for evaluation playback, not training).
     enable_viz: bool = False
 
+    # Basilisk instrument camera (requires Vizard; body-fixed on the hub).
+    enable_camera: bool = False
+    camera_width: int = 64
+    camera_height: int = 64
+
     randomize_initial_distance: bool = False
     initial_distance_delta: float = 0.0
     randomize_initial_vertical_velocity: bool = False
@@ -263,7 +298,7 @@ class LandingEnvConfig:
     lateral_offset_delta: float = 0.0
 
     def target_array(self) -> np.ndarray:
-        """Return the target proxy as a length-3 ``float64`` NumPy array.
+        """Return the surface landing site as a length-3 ``float64`` array.
 
         Returns:
             Shape ``(3,)`` array copy of ``target_position_N``.
@@ -292,6 +327,7 @@ class SimHandles:
         gravity_actuator: Retained MuJoCo force actuator reference.
         thruster_viz_writer: Optional Vizard thruster writer reference.
         viz: Optional Vizard interface object.
+        camera_mod: Optional Basilisk ``camera.Camera`` instrument module.
         absolute_sim_time_sec: Monotonic Basilisk stop-time clock, seconds.
         episode_time_sec: Time elapsed within the current episode, seconds.
         previous_throttle: Last applied throttle in ``[0, 1]``.
@@ -309,6 +345,7 @@ class SimHandles:
     gravity_actuator: Any = None
     thruster_viz_writer: Any = None
     viz: Any = None
+    camera_mod: Any = None
     absolute_sim_time_sec: float = 0.0
     episode_time_sec: float = 0.0
     previous_throttle: float = 0.0
@@ -333,29 +370,33 @@ class AsteroidLandingEnv(gym.Env):
     """Gymnasium environment for fixed-site asteroid landing control.
 
     Action is scalar throttle in ``[0, 1]``. Observation is a 5-D truth-state
-    vector: ``[altitude, vertical_velocity, distance, speed, previous_throttle]``.
+    vector:
+    ``[altitude, vertical_velocity, distance_to_site, speed, previous_throttle]``.
 
     Attributes:
-        metadata: Gymnasium metadata (no render modes).
+        metadata: Gymnasium metadata (``rgb_array`` when camera enabled).
         config: Active ``LandingEnvConfig``.
         handles: Current ``SimHandles``, or ``None`` before first reset.
+        surface: Shared asteroid ``SurfaceMap`` for altitude queries.
         action_space: Box with shape ``(1,)`` for throttle.
         observation_space: Box with shape ``(5,)`` for truth-state features.
     """
 
-    metadata = {"render_modes": []}
+    metadata = {"render_modes": ["rgb_array"]}
 
     def __init__(self, config: Optional[LandingEnvConfig] = None):
         """Create the environment wrapper (does not build Basilisk until reset).
 
         Args:
             config: Optional env configuration. If ``None``, defaults from
-                ``LandingEnvConfig`` are used.
+                ``LandingEnvConfig`` are used. ``enable_camera`` attaches a
+                Basilisk body-fixed camera and requires a Vizard connection.
         """
         super().__init__()
         self.config = config or LandingEnvConfig()
         self.handles: Optional[SimHandles] = None
         self._np_random: Optional[np.random.Generator] = None
+        self.surface = get_surface_map()
 
         self.action_space = spaces.Box(
             low=np.array([0.0], dtype=np.float32),
@@ -409,26 +450,18 @@ class AsteroidLandingEnv(gym.Env):
         self.handles.episode_time_sec = SIM_DT
 
         obs = self._get_obs()
-        info = {
-            "sim_time_sec": self.handles.sim_time_sec,
-            "termination_reason": None,
-            "throttle": 0.0,
-            "thrust_N": 0.0,
-            "distance_to_target": float(obs[2]),
-            "speed": float(obs[3]),
-            "vertical_velocity": float(obs[1]),
-            "reward_total": 0.0,
-            "reward_progress": 0.0,
-            "reward_speed_penalty": 0.0,
-            "reward_fuel_penalty": 0.0,
-            "reward_terminal": 0.0,
-            "success": False,
-            "crash": False,
-            "escape": False,
-            "timeout": False,
-            "initial_position_N": initial_position.tolist(),
-            "initial_velocity_N": initial_velocity.tolist(),
-        }
+        info = self._base_info(obs, throttle=0.0, thrust_N=0.0, reason=None)
+        info.update(
+            {
+                "reward_total": 0.0,
+                "reward_progress": 0.0,
+                "reward_speed_penalty": 0.0,
+                "reward_fuel_penalty": 0.0,
+                "reward_terminal": 0.0,
+                "initial_position_N": initial_position.tolist(),
+                "initial_velocity_N": initial_velocity.tolist(),
+            }
+        )
         return obs, info
 
     def _soft_reset_state(self, position: np.ndarray, velocity: np.ndarray) -> None:
@@ -439,14 +472,9 @@ class AsteroidLandingEnv(gym.Env):
             velocity: Desired inertial velocity for the spacecraft hub, m/s.
         """
         hub = self.handles.scene.getBody(SPACECRAFT_BODY_NAME)
-        # Only set position when it differs from the XML default origin.
-        if hasattr(hub, "setPosition") and not np.allclose(
-            position, DEFAULT_INITIAL_POSITION
-        ):
-            hub.setPosition(position.tolist())
-        elif hasattr(hub, "setPosition"):
-            hub.setPosition(list(DEFAULT_INITIAL_POSITION))
-        hub.setVelocity(velocity.tolist())
+        if hasattr(hub, "setPosition"):
+            hub.setPosition(np.asarray(position, dtype=np.float64).reshape(3).tolist())
+        hub.setVelocity(np.asarray(velocity, dtype=np.float64).reshape(3).tolist())
         self.handles.thrust_msg.write(messaging.SingleActuatorMsgPayload(input=0.0))
 
     def step(self, action):
@@ -486,27 +514,78 @@ class AsteroidLandingEnv(gym.Env):
             reward = float(terms["reward_total"])
             reason = "timeout"
 
-        info = {
-            "sim_time_sec": self.handles.sim_time_sec,
-            "termination_reason": reason,
-            "throttle": throttle,
-            "thrust_N": thrust_N,
-            "distance_to_target": float(obs[2]),
-            "speed": float(obs[3]),
-            "vertical_velocity": float(obs[1]),
-            "reward_total": float(terms["reward_total"]),
-            "reward_progress": float(terms["reward_progress"]),
-            "reward_speed_penalty": float(terms["reward_speed_penalty"]),
-            "reward_fuel_penalty": float(terms["reward_fuel_penalty"]),
-            "reward_terminal": float(terms["reward_terminal"]),
-            "success": reason == "safe_landing",
-            "crash": reason == "crash",
-            "escape": reason == "escaped",
-            "timeout": reason == "timeout" or (truncated and not terminated),
-        }
+        info = self._base_info(obs, throttle=throttle, thrust_N=thrust_N, reason=reason)
+        info.update(
+            {
+                "reward_total": float(terms["reward_total"]),
+                "reward_progress": float(terms["reward_progress"]),
+                "reward_speed_penalty": float(terms["reward_speed_penalty"]),
+                "reward_fuel_penalty": float(terms["reward_fuel_penalty"]),
+                "reward_terminal": float(terms["reward_terminal"]),
+                "timeout": reason == "timeout" or (truncated and not terminated),
+            }
+        )
 
         self.handles.previous_throttle = throttle
         return obs, float(reward), bool(terminated), bool(truncated), info
+
+    def render(self) -> Optional[np.ndarray]:
+        """Return an RGB frame from the Basilisk hub-mounted instrument camera.
+
+        Requires ``config.enable_camera`` and a live Vizard connection that has
+        already delivered at least one OpNav image.
+
+        Returns:
+            ``uint8`` array of shape ``(H, W, 3)``, or ``None`` when the camera
+            is disabled / not yet producing frames.
+        """
+        if self.handles is None or self.handles.camera_mod is None:
+            return None
+        from asteroid_rl.camera import read_camera_rgb
+
+        return read_camera_rgb(
+            self.handles.camera_mod,
+            width=self.config.camera_width,
+            height=self.config.camera_height,
+        )
+
+    def close(self) -> None:
+        """Release environment resources (no-op placeholder for Gym API)."""
+        return None
+
+    def _base_info(
+        self,
+        obs: np.ndarray,
+        *,
+        throttle: float,
+        thrust_N: float,
+        reason: Optional[str],
+    ) -> dict:
+        """Build the common info dict shared by ``reset`` and ``step``.
+
+        Args:
+            obs: Current 5-D observation.
+            throttle: Applied throttle in ``[0, 1]``.
+            thrust_N: Applied thrust in Newtons.
+            reason: Termination reason string, or ``None``.
+
+        Returns:
+            Info dictionary with telemetry and termination flags.
+        """
+        return {
+            "sim_time_sec": self.handles.sim_time_sec if self.handles else 0.0,
+            "termination_reason": reason,
+            "throttle": float(throttle),
+            "thrust_N": float(thrust_N),
+            "altitude": float(obs[0]),
+            "distance_to_target": float(obs[2]),
+            "speed": float(obs[3]),
+            "vertical_velocity": float(obs[1]),
+            "success": reason == "safe_landing",
+            "crash": reason == "crash",
+            "escape": reason == "escaped",
+            "timeout": reason == "timeout",
+        }
 
     def _sample_initial_state(self) -> Tuple[np.ndarray, np.ndarray]:
         """Sample (or return default) inertial position and velocity for reset.
@@ -643,21 +722,19 @@ class AsteroidLandingEnv(gym.Env):
 
         Returns:
             ``float32`` array
-            ``[altitude, vertical_velocity, distance, speed, previous_throttle]``.
-            Currently altitude and distance both use distance-to-target.
+            ``[altitude, vertical_velocity, distance_to_site, speed, previous_throttle]``
+            where altitude is hub height above the local mesh surface and
+            vertical_velocity is inertial ``v_z`` (negative when descending).
         """
         r, v = self._get_latest_state()
         target = self.config.target_array()
-        rel = r - target
-        distance = float(np.linalg.norm(rel))
+        altitude = float(self.surface.altitude(r))
+        distance = float(np.linalg.norm(r - target))
         speed = float(np.linalg.norm(v))
-        if distance > 1e-9:
-            vertical_velocity_proxy = float(np.dot(v, rel / distance))
-        else:
-            vertical_velocity_proxy = 0.0
+        vertical_velocity = float(v[2])
         prev_throttle = 0.0 if self.handles is None else self.handles.previous_throttle
         return np.array(
-            [distance, vertical_velocity_proxy, distance, speed, prev_throttle],
+            [altitude, vertical_velocity, distance, speed, prev_throttle],
             dtype=np.float32,
         )
 
@@ -675,8 +752,12 @@ class AsteroidLandingEnv(gym.Env):
             Tuple ``(reward_total, terms)`` where ``terms`` maps reward component
             names to floats (progress, speed penalty, fuel penalty, terminal).
         """
-        progress = float(prev_obs[2]) - float(obs[2])
-        reward_progress = self.config.progress_weight * progress
+        site_progress = float(prev_obs[2]) - float(obs[2])
+        alt_progress = float(prev_obs[0]) - float(obs[0])
+        reward_progress = (
+            self.config.progress_weight * site_progress
+            + self.config.altitude_progress_weight * alt_progress
+        )
         reward_speed_penalty = -self.config.speed_weight * float(obs[3])
         reward_fuel_penalty = -self.config.fuel_weight * (throttle ** 2)
         reward_terminal = 0.0
@@ -702,21 +783,38 @@ class AsteroidLandingEnv(gym.Env):
         return float(reward_total), terms
 
     def _check_terminated(self, obs: np.ndarray) -> Tuple[bool, Optional[str]]:
-        """Evaluate terminal success / crash / escape conditions.
+        """Evaluate terminal success / crash / escape against the surface site.
 
         Args:
-            obs: Current observation, shape ``(5,)``. Uses distance (index 2)
-                and speed (index 3).
+            obs: Current observation, shape ``(5,)``. Uses altitude (index 0),
+                distance-to-site (index 2), and speed (index 3).
 
         Returns:
             Tuple ``(terminated, reason)`` where ``reason`` is one of
             ``"safe_landing"``, ``"crash"``, ``"escaped"``, or ``None``.
         """
+        altitude = float(obs[0])
         distance = float(obs[2])
         speed = float(obs[3])
-        if distance <= self.config.success_radius and speed <= self.config.success_speed:
+        target = self.config.target_array()
+        # Lateral miss uses current hub x/y vs site x/y.
+        if self.handles is not None:
+            r, _v = self._get_latest_state()
+            lateral = float(np.linalg.norm(r[:2] - target[:2]))
+        else:
+            lateral = distance
+
+        if altitude < self.config.penetration_altitude:
+            return True, "crash"
+        if (
+            self.config.min_success_altitude
+            <= altitude
+            <= self.config.success_altitude
+            and speed <= self.config.success_speed
+            and lateral <= self.config.success_lateral
+        ):
             return True, "safe_landing"
-        if distance <= self.config.crash_radius and speed > self.config.crash_speed:
+        if altitude <= self.config.crash_altitude and speed > self.config.crash_speed:
             return True, "crash"
         if distance >= self.config.escape_radius:
             return True, "escaped"
@@ -797,40 +895,52 @@ def _find_vizard_app() -> Optional[str]:
 
 
 def _launch_vizard_livestream(port: str = "5556") -> None:
-    """Open Vizard and connect it to Basilisk's live TCP stream.
+    """Open Vizard in visible liveStream mode.
 
     Args:
         port: TCP port that Basilisk ``vizInterface`` is listening on.
     """
-    app = _find_vizard_app()
-    address = f"tcp://localhost:{port}"
-    if app is None:
-        print(
-            "Vizard.app not found in /Applications.\n"
-            f"Open Vizard manually, choose Direct Communication + Live Streaming,\n"
-            f"and connect to {address}"
-        )
-        return
+    from asteroid_rl.camera import launch_vizard_for_camera
 
-    # macOS: `open` launches the GUI app; --args forwards Unity CLI flags.
-    cmd = ["open", app, "--args", "-directComm", address]
-    print(f"Launching Vizard: {' '.join(cmd)}")
-    subprocess.Popen(cmd)
-    # Give Unity a moment to boot before Basilisk blocks waiting for a client.
-    time.sleep(2.5)
+    launch_vizard_for_camera(
+        port=port,
+        show_gui=True,
+        find_app_fn=_find_vizard_app,
+        sleep_fn=time.sleep,
+        popen_fn=subprocess.Popen,
+    )
 
 
-def _setup_vizard(scSim, scene, thrust_msg, max_thrust: float):
-    """Attach live Vizard visualization and launch the Vizard client.
+def _setup_vizard(
+    scSim,
+    scene,
+    thrust_msg,
+    max_thrust: float,
+    *,
+    show_gui: bool = True,
+    enable_camera: bool = False,
+    camera_width: int = 64,
+    camera_height: int = 64,
+    camera_render_rate_sec: float = 0.25,
+):
+    """Attach Vizard, optional thruster HUD, and optional Basilisk instrument camera.
 
     Args:
         scSim: Basilisk simulation object to attach viz modules to.
         scene: MuJoCo scene providing spacecraft / asteroid bodies.
         thrust_msg: Scalar thruster command message mirrored into Vizard.
         max_thrust: Nominal max thrust used for Vizard thruster scaling, Newtons.
+        show_gui: If True, launch Vizard with a visible window (``-directComm``).
+            If False (camera-only), launch headless OpNav mode (``-noDisplay``).
+        enable_camera: If True, attach a body-fixed ``camera.Camera`` on the hub
+            and register it with ``vizInterface`` for OpNav image requests.
+        camera_width: Instrument camera width in pixels.
+        camera_height: Instrument camera height in pixels.
+        camera_render_rate_sec: Image request period in seconds.
 
     Returns:
-        Tuple ``(viz, thruster_viz_writer)`` for retention on ``SimHandles``.
+        Tuple ``(viz, thruster_viz_writer, camera_mod)`` for retention on
+        ``SimHandles``. ``camera_mod`` is ``None`` when ``enable_camera`` is False.
 
     Raises:
         RuntimeError: If Basilisk was built without vizInterface support.
@@ -850,8 +960,7 @@ def _setup_vizard(scSim, scene, thrust_msg, max_thrust: float):
     )
     scSim.AddModelToTask(SIM_TASK_NAME, thruster_viz_writer)
 
-    # liveStream=True is required for Vizard to show the run as it happens.
-    # Without it (and without saveFile), vizInterface is attached but nothing opens.
+    # liveStream enables 2-way TCP (needed for instrument-camera image requests).
     viz = vizSupport.enableUnityVisualization(
         scSim,
         SIM_TASK_NAME,
@@ -859,6 +968,7 @@ def _setup_vizard(scSim, scene, thrust_msg, max_thrust: float):
         liveStream=True,
     )
     viz.reqPortNumber = "5556"
+    viz.noDisplay = not bool(show_gui)
     _attach_thruster_visualization(viz, SPACECRAFT_BODY_NAME, thruster_viz_writer)
     viz.settings.showSpacecraftAsSprites = -1
     viz.settings.ambient = 0.1
@@ -877,8 +987,32 @@ def _setup_vizard(scSim, scene, thrust_msg, max_thrust: float):
         custom_kwargs["customTexturePath"] = AST_TEXTURE_PATH
     vizSupport.createCustomModel(viz, **custom_kwargs)
 
-    _launch_vizard_livestream(port=str(viz.reqPortNumber))
-    return viz, thruster_viz_writer
+    camera_mod = None
+    if enable_camera:
+        from asteroid_rl.camera import create_instrument_camera
+
+        camera_mod = create_instrument_camera(
+            parent_name=SPACECRAFT_BODY_NAME,
+            width=camera_width,
+            height=camera_height,
+            render_rate_sec=camera_render_rate_sec,
+        )
+        # Camera must be on the task before InitializeSimulation so config msgs exist.
+        scSim.AddModelToTask(SIM_TASK_NAME, camera_mod)
+        viz.addCamMsgToModule(camera_mod.cameraConfigOutMsg)
+        camera_mod.imageInMsg.subscribeTo(viz.opnavImageOutMsgs[-1])
+        viz.settings.viewCameraViewHUD = 1
+
+    from asteroid_rl.camera import launch_vizard_for_camera
+
+    launch_vizard_for_camera(
+        port=str(viz.reqPortNumber),
+        show_gui=show_gui,
+        find_app_fn=_find_vizard_app,
+        sleep_fn=time.sleep,
+        popen_fn=subprocess.Popen,
+    )
+    return viz, thruster_viz_writer, camera_mod
 
 
 def build_sim(
@@ -955,15 +1089,25 @@ def build_sim(
 
     viz = None
     thruster_viz_writer = None
-    if config.enable_viz:
-        viz, thruster_viz_writer = _setup_vizard(
-            scSim, scene, thrust_msg, config.max_thrust
+    camera_mod = None
+    need_viz = bool(config.enable_viz or config.enable_camera)
+    if need_viz:
+        viz, thruster_viz_writer, camera_mod = _setup_vizard(
+            scSim,
+            scene,
+            thrust_msg,
+            config.max_thrust,
+            show_gui=bool(config.enable_viz),
+            enable_camera=bool(config.enable_camera),
+            camera_width=int(config.camera_width),
+            camera_height=int(config.camera_height),
+            camera_render_rate_sec=float(config.control_dt),
         )
 
     scSim.InitializeSimulation()
 
     hub = scene.getBody(SPACECRAFT_BODY_NAME)
-    if hasattr(hub, "setPosition") and not np.allclose(position, DEFAULT_INITIAL_POSITION):
+    if hasattr(hub, "setPosition"):
         hub.setPosition(position.tolist())
     hub.setVelocity(velocity.tolist())
 
@@ -980,6 +1124,7 @@ def build_sim(
         gravity_actuator=gravityActuator,
         thruster_viz_writer=thruster_viz_writer,
         viz=viz,
+        camera_mod=camera_mod,
         absolute_sim_time_sec=SIM_DT,
         episode_time_sec=SIM_DT,
         previous_throttle=0.0,

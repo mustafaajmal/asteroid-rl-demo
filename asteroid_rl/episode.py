@@ -68,18 +68,22 @@ def summarize_episode(rows: List[dict]) -> dict:
     distances = [float(r.get("distance", 0.0)) for r in rows]
     speeds = [float(r.get("speed", 0.0)) for r in rows]
     throttles = [float(r.get("throttle", 0.0)) for r in rows]
+    altitudes = [float(r.get("altitude", 0.0)) for r in rows]
     return {
         "final_time": last.get("time"),
+        "final_altitude": last.get("altitude"),
         "final_distance": last.get("distance"),
         "final_speed": last.get("speed"),
         "termination_reason": last.get("termination_reason"),
         "total_reward": sum(float(r.get("reward", 0.0)) for r in rows),
         "steps": len(rows),
+        "min_altitude": min(altitudes) if altitudes else None,
         "min_distance": min(distances) if distances else None,
         "max_speed": max(speeds) if speeds else None,
         "avg_throttle": float(np.mean(throttles)) if throttles else None,
         "max_throttle": max(throttles) if throttles else None,
         "initial_distance": distances[0] if distances else None,
+        "initial_altitude": altitudes[0] if altitudes else None,
     }
 
 
@@ -146,8 +150,9 @@ def run_episode(
 
         if print_every is not None and step_idx % print_every == 0:
             print(
-                f"t={row['time']:.2f}s  dist={row['distance']:.1f}m  "
-                f"spd={row['speed']:.2f}  thr={row['throttle']:.2f}"
+                f"t={row['time']:.2f}s  alt={row['altitude']:.1f}m  "
+                f"dist={row['distance']:.1f}m  spd={row['speed']:.2f}  "
+                f"thr={row['throttle']:.2f}"
             )
 
         if step_sleep_sec > 0:
@@ -186,8 +191,10 @@ def write_summary_markdown(summaries: List[Dict[str, Any]], path: str) -> None:
                 "",
                 f"- Steps: `{s.get('steps')}`",
                 f"- Final time [s]: `{s.get('final_time')}`",
+                f"- Final altitude [m]: `{s.get('final_altitude')}`",
                 f"- Final distance [m]: `{s.get('final_distance')}`",
                 f"- Final speed [m/s]: `{s.get('final_speed')}`",
+                f"- Min altitude [m]: `{s.get('min_altitude')}`",
                 f"- Min distance [m]: `{s.get('min_distance')}`",
                 f"- Max speed [m/s]: `{s.get('max_speed')}`",
                 f"- Total reward: `{s.get('total_reward')}`",

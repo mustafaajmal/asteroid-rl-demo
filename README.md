@@ -2,15 +2,19 @@
 
 Minimal proof-of-life demo: Basilisk/MuJoCo asteroid landing driven by a Gymnasium env + optional PPO.
 
+Success is scored against **altitude above the Itokawa mesh surface** (not the asteroid body origin). Optional **Basilisk body-fixed instrument camera** frames are rendered by Vizard (OpNav path; no VLM yet).
+
 ## Layout
 
 ```text
 asteroid_rl/            # Python package
   env.py                # sim + Gymnasium env (+ optional Vizard)
+  surface.py            # mesh heightmap altitude queries
+  camera.py             # Basilisk instrument camera helpers
   policies.py           # scripted / random / PPO action helpers
   episode.py            # shared run_episode / CSV / summaries
   cli/                  # entrypoints (play, train, evaluate, …)
-assets/                 # MuJoCo XML + Itokawa mesh
+assets/                 # MuJoCo XML + Itokawa mesh + heightmap
 vendor/                 # original Basilisk scenario (reference)
 examples/               # optional full bskExamples dump
 logs/  outputs/         # generated artifacts
@@ -43,6 +47,10 @@ python -m asteroid_rl.cli.play --policy ppo --model outputs/ppo_asteroid_fixed_s
 python -m asteroid_rl.cli.play --policy scripted --viz
 python -m asteroid_rl.cli.play --policy ppo --model outputs/ppo_asteroid_fixed_site_v2.zip --viz
 
+# Basilisk hub camera via Vizard (headless -noDisplay unless --viz also set)
+python -m asteroid_rl.cli.play --policy scripted --camera --save-frame outputs/plots/navcam.png
+python -m asteroid_rl.cli.play --policy scripted --camera --viz
+
 # Train / evaluate
 python -m asteroid_rl.cli.train_ppo --timesteps 20000 --device cpu --seed 0
 python -m asteroid_rl.cli.evaluate
@@ -55,6 +63,8 @@ python -m asteroid_rl.cli.train_curriculum --timesteps-per-stage 2000
 
 ## Scope
 
-Included: fixed asteroid, fixed target proxy, truth-state obs, scalar throttle, scripted/random/PPO, optional Vizard.
+Included: fixed asteroid, **surface landing site**, truth-state obs (altitude / ``v_z`` / range / speed / throttle), scalar throttle, scripted/random/PPO, optional Vizard, optional **Basilisk instrument camera** (Vizard OpNav images).
 
-Excluded: Scenic, VLM, camera perception, landing-site selection, full BSK-RL, 3D force/torque control.
+Excluded: Scenic, VLM reasoning, landing-site selection, full BSK-RL, 3D force/torque control.
+
+**Camera note:** ``--camera`` mounts a Basilisk ``camera.Camera`` on the hub (looking toward the asteroid) and requires a Vizard connection. Use ``--camera`` alone for headless OpNav frames, or ``--camera --viz`` to also see the scene / camera HUD.

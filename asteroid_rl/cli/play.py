@@ -8,6 +8,8 @@ Examples:
     python -m asteroid_rl.cli.play --policy random
     python -m asteroid_rl.cli.play --policy ppo --model outputs/ppo_asteroid_fixed_site_v2.zip
     python -m asteroid_rl.cli.play --policy scripted --viz
+    python -m asteroid_rl.cli.play --policy scripted --camera --save-frame outputs/plots/navcam.png
+    # --camera uses Basilisk's body-fixed instrument camera via Vizard (OpNav path)
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ def parse_args() -> Namespace:
 
     Returns:
         Parsed argparse namespace with ``policy``, ``model``, ``seed``, ``viz``,
-        ``realtime_scale``, and ``csv`` fields.
+        ``camera``, ``save_frame``, ``realtime_scale``, and ``csv`` fields.
     """
     parser = argparse.ArgumentParser(
         description="Play one asteroid-landing episode (optionally in Vizard)"
@@ -51,6 +53,17 @@ def parse_args() -> Namespace:
         help="Live-stream the episode to Vizard",
     )
     parser.add_argument(
+        "--camera",
+        action="store_true",
+        help="Enable Basilisk hub-mounted instrument camera (requires Vizard)",
+    )
+    parser.add_argument(
+        "--save-frame",
+        type=str,
+        default="",
+        help="If set with --camera, save one RGB frame after a few steps",
+    )
+    parser.add_argument(
         "--realtime-scale",
         type=float,
         default=0.0,
@@ -64,6 +77,8 @@ def main() -> None:
     """Load a policy, run one episode, and write a CSV log.
 
     When ``--viz`` is set, enables Basilisk liveStream and launches Vizard.
+    When ``--camera`` is set, attaches a Basilisk body-fixed camera and launches
+    Vizard (headless ``-noDisplay`` unless ``--viz`` is also set).
     When ``--policy ppo`` is set, loads ``--model`` from disk first.
     """
     args = parse_args()
@@ -79,35 +94,66 @@ def main() -> None:
         model = PPO.load(args.model, device="cpu")
 
     action_fn = make_action_fn(args.policy, model=model, seed=args.seed)
+    # Camera needs Vizard; do not reuse the sim across episodes while viz is up.
     config = LandingEnvConfig(
         seed=args.seed,
         randomize_reset=False,
-        reuse_sim=not args.viz,
+        reuse_sim=not (args.viz or args.camera),
         enable_viz=args.viz,
+        enable_camera=args.camera,
     )
     env = AsteroidLandingEnv(config=config)
 
     prefix = "viz" if args.viz else "play"
     csv_path = args.csv or f"logs/{prefix}_{args.policy}_episode.csv"
 
-    if args.viz:
-        print(f"Starting '{args.policy}' episode with Vizard liveStream...")
+    if args.viz or args.camera:
+        print(f"Starting '{args.policy}' episode with Vizard...")
         print("Vizard should open and connect to tcp://localhost:5556")
-        print("If it waits forever: Direct Communication + Live Streaming in Vizard.")
+        if args.camera and not args.viz:
+            print("Camera-only mode uses Vizard -noDisplay (OpNav image path).")
+        if args.viz:
+            print("If it waits forever: Direct Communication + Live Streaming in Vizard.")
+
+    if args.camera and args.save_frame:
+        import numpy as np
+
+        obs, _info = env.reset()
+        frame = None
+        for _ in range(8):
+            obs, _reward, terminated, truncated, _info = env.step(
+                np.array([0.5], dtype=np.float32)
+            )
+            frame = env.render()
+            if frame is not None or terminated or truncated:
+                break
+        if frame is None:
+            raise RuntimeError(
+                "Basilisk camera enabled but no image received from Vizard yet. "
+                "Confirm Vizard is running and connected (OpNav / Direct Comm)."
+            )
+        os.makedirs(os.path.dirname(args.save_frame) or ".", exist_ok=True)
+        import matplotlib.pyplot as plt
+
+        plt.imsave(args.save_frame, frame)
+        print(f"Saved Basilisk instrument-camera frame to {args.save_frame}")
 
     summary = run_episode(
         args.policy,
         action_fn,
         env,
         csv_path,
-        print_every=10 if args.viz else 1,
+        print_every=10 if (args.viz or args.camera) else 1,
         step_sleep_sec=config.control_dt * args.realtime_scale,
     )
     print(
         f"Episode ended: {summary.get('termination_reason')} "
-        f"(dist={summary.get('final_distance')}, speed={summary.get('final_speed')})"
+        f"(alt={summary.get('final_altitude')}, "
+        f"dist={summary.get('final_distance')}, "
+        f"speed={summary.get('final_speed')})"
     )
     print(f"Saved {csv_path}")
+    env.close()
 
 
 if __name__ == "__main__":

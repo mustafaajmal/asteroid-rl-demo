@@ -1,7 +1,7 @@
 """Quick environment sanity check: reset plus a few fixed-throttle steps.
 
-Verifies that ``AsteroidLandingEnv`` can reset, step, and return observations,
-rewards, and info flags without training or Vizard.
+Verifies that ``AsteroidLandingEnv`` can reset, step, and return observations
+(including surface altitude), rewards, and info flags without training or Vizard.
 """
 
 from __future__ import annotations
