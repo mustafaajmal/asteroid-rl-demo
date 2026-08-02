@@ -11,47 +11,38 @@ import numpy as np
 from asteroid_rl.env import AsteroidLandingEnv
 
 
-def main() -> None:
-    """Reset the env and run up to 10 steps at throttle ``0.5``.
+def _run_mode(mode: str, steps: int = 3) -> None:
+    """Smoke a few steps under one observation mode.
 
-    Prints observation, reward, termination flags, reward terms, and info
-    flags each step. Stops early if the episode terminates or truncates.
+    Args:
+        mode: ``truth``, ``sensors``, or ``perception``.
+        steps: Number of fixed-throttle steps to run.
     """
-    env = AsteroidLandingEnv()
-    obs, info = env.reset()
-    print("reset obs:", obs)
-    print("reset info keys:", sorted(info.keys()))
+    from asteroid_rl.env import LandingEnvConfig
 
-    for i in range(10):
-        action = np.array([0.5], dtype=np.float32)
-        obs, reward, terminated, truncated, info = env.step(action)
-        print("--- step", i, "---")
-        print("obs:", obs)
-        print("reward:", reward)
-        print("terminated:", terminated, "truncated:", truncated)
-        print("termination_reason:", info.get("termination_reason"))
-        print(
-            "reward terms:",
-            {
-                "reward_total": info.get("reward_total"),
-                "reward_progress": info.get("reward_progress"),
-                "reward_speed_penalty": info.get("reward_speed_penalty"),
-                "reward_fuel_penalty": info.get("reward_fuel_penalty"),
-                "reward_terminal": info.get("reward_terminal"),
-            },
+    env = AsteroidLandingEnv(config=LandingEnvConfig(obs_mode=mode, reuse_sim=True))
+    obs, info = env.reset()
+    print(f"=== obs_mode={mode} dim={obs.shape} ===")
+    print("reset obs:", obs)
+    assert info.get("truth_state") is not None
+    for i in range(steps):
+        obs, reward, terminated, truncated, info = env.step(
+            np.array([0.5], dtype=np.float32)
         )
-        print(
-            "flags:",
-            {
-                "success": info.get("success"),
-                "crash": info.get("crash"),
-                "escape": info.get("escape"),
-                "timeout": info.get("timeout"),
-                "thrust_N": info.get("thrust_N"),
-            },
-        )
+        print(f"step {i}: obs={obs} reward={reward:.3f} reason={info.get('termination_reason')}")
         if terminated or truncated:
             break
+    env.close()
+
+
+def main() -> None:
+    """Reset the env and run a few fixed-throttle steps for each obs mode.
+
+    Prints observation, reward, and termination reason. Also asserts that
+    privileged ``truth_state`` remains available in ``info`` for reward logging.
+    """
+    for mode in ("truth", "sensors", "perception"):
+        _run_mode(mode)
 
 
 if __name__ == "__main__":

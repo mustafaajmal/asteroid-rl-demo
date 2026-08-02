@@ -50,12 +50,12 @@ def parse_args() -> Namespace:
     parser.add_argument(
         "--viz",
         action="store_true",
-        help="Live-stream the episode to Vizard",
+        help="Live-stream to Vizard (also enables the hub instrument camera HUD)",
     )
     parser.add_argument(
         "--camera",
         action="store_true",
-        help="Enable Basilisk hub-mounted instrument camera (requires Vizard)",
+        help="Enable Basilisk hub camera (implied by --viz; use alone for headless OpNav)",
     )
     parser.add_argument(
         "--save-frame",
@@ -70,15 +70,43 @@ def parse_args() -> Namespace:
         help="Extra sleep vs control_dt (0 = no extra sleep / Vizard paces liveStream)",
     )
     parser.add_argument("--csv", type=str, default="")
+    parser.add_argument(
+        "--randomize",
+        action="store_true",
+        help="Mild start-state randomization (not Scenic)",
+    )
+    parser.add_argument(
+        "--no-auto-point",
+        action="store_true",
+        help="Disable scripted attitude pointing at the landing site",
+    )
+    parser.add_argument(
+        "--flat-surface",
+        action="store_true",
+        help="Land on a flat plane instead of the Itokawa heightmap",
+    )
+    parser.add_argument(
+        "--obs-noise",
+        type=float,
+        default=0.0,
+        help="Gaussian noise std on agent observation channels (0 = off)",
+    )
+    parser.add_argument(
+        "--obs-mode",
+        type=str,
+        choices=("truth", "sensors", "perception"),
+        default="truth",
+        help="Policy observation mode (reward still uses simulator truth)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     """Load a policy, run one episode, and write a CSV log.
 
-    When ``--viz`` is set, enables Basilisk liveStream and launches Vizard.
-    When ``--camera`` is set, attaches a Basilisk body-fixed camera and launches
-    Vizard (headless ``-noDisplay`` unless ``--viz`` is also set).
+    When ``--viz`` is set, enables Basilisk liveStream, launches Vizard, and
+    always attaches the hub instrument camera (camera HUD).
+    ``--camera`` alone enables the same camera in headless OpNav mode.
     When ``--policy ppo`` is set, loads ``--model`` from disk first.
     """
     args = parse_args()
@@ -94,28 +122,38 @@ def main() -> None:
         model = PPO.load(args.model, device="cpu")
 
     action_fn = make_action_fn(args.policy, model=model, seed=args.seed)
-    # Camera needs Vizard; do not reuse the sim across episodes while viz is up.
+    # --viz always includes the Basilisk instrument camera.
+    use_camera = bool(args.camera or args.viz)
+    use_viz = bool(args.viz)
+    # Camera/Vizard need a live connection; do not reuse the sim across episodes.
     config = LandingEnvConfig(
         seed=args.seed,
         randomize_reset=False,
-        reuse_sim=not (args.viz or args.camera),
-        enable_viz=args.viz,
-        enable_camera=args.camera,
+        light_randomize=args.randomize,
+        auto_point=not args.no_auto_point,
+        reuse_sim=not (use_viz or use_camera),
+        enable_viz=use_viz,
+        enable_camera=use_camera,
+        use_flat_surface=bool(args.flat_surface),
+        obs_noise_std=float(args.obs_noise),
+        obs_mode=str(args.obs_mode),
     )
     env = AsteroidLandingEnv(config=config)
 
     prefix = "viz" if args.viz else "play"
     csv_path = args.csv or f"logs/{prefix}_{args.policy}_episode.csv"
 
-    if args.viz or args.camera:
+    if use_viz or use_camera:
         print(f"Starting '{args.policy}' episode with Vizard...")
         print("Vizard should open and connect to tcp://localhost:5556")
-        if args.camera and not args.viz:
+        if use_camera:
+            print("Hub instrument camera enabled (look for Camera View HUD in Vizard).")
+        if use_camera and not use_viz:
             print("Camera-only mode uses Vizard -noDisplay (OpNav image path).")
-        if args.viz:
+        if use_viz:
             print("If it waits forever: Direct Communication + Live Streaming in Vizard.")
 
-    if args.camera and args.save_frame:
+    if use_camera and args.save_frame:
         import numpy as np
 
         obs, _info = env.reset()
@@ -143,7 +181,7 @@ def main() -> None:
         action_fn,
         env,
         csv_path,
-        print_every=10 if (args.viz or args.camera) else 1,
+        print_every=10 if (use_viz or use_camera) else 1,
         step_sleep_sec=config.control_dt * args.realtime_scale,
     )
     print(

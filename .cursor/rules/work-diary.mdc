@@ -1,0 +1,25 @@
+---
+description: Maintain WORK_DIARY.md as append-only cross-session context
+alwaysApply: true
+---
+
+# Work diary (cross-session memory)
+
+This repo uses `WORK_DIARY.md` at the project root as a **running work diary** so context survives across Cursor chats and machines (M2, home PC, etc.).
+
+## Required habits
+
+1. **At the start** of non-trivial work (multi-step coding, training, architecture): read `WORK_DIARY.md`, especially **Current state**, **Open threads**, and the latest dated entries.
+2. **After meaningful changes**: append a new dated subsection. Do **not** delete, rewrite, or compress historical entries.
+3. **Allowed in-place edits:** only the top sections labeled **Current state**, **Open threads**, and **Self-prompts for next session**.
+4. When ending a substantial task, update those three sections so the next session can bootstrap without the chat transcript.
+5. Prefer putting durable decisions, gotchas, and “what not to redo” in the diary rather than only in chat.
+
+## Entry quality
+
+Include: goal, what changed, key files, commands/results if any, gotchas, and next steps. Keep it concise but searchable.
+
+## Do not
+
+- Replace the diary with a fresh summary that drops history.
+- Assume chat memory exists on another machine — the diary + git are the source of truth.

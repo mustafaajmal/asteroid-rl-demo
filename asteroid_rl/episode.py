@@ -118,21 +118,41 @@ def run_episode(
         Episode summary dict from ``summarize_episode``, plus ``policy`` and
         ``csv_path`` keys.
     """
-    obs, _info = env.reset()
+    obs, info = env.reset()
     rows: List[dict] = []
 
     for step_idx in range(max_steps):
-        action = action_fn(obs)
+        try:
+            action = action_fn(obs, info)
+        except TypeError:
+            action = action_fn(obs)
         obs, reward, terminated, truncated, info = env.step(action)
+        perception = info.get("perception") or {}
+        box = perception.get("landing_site_box") or [None, None, None, None]
+        # Prefer privileged info telemetry — agent ``obs`` may be sensors/perception.
+        truth = info.get("truth_state")
+        if truth is not None and len(truth) >= 5:
+            altitude = float(truth[0])
+            vertical_velocity = float(truth[1])
+            distance = float(truth[2])
+            speed = float(truth[3])
+            previous_throttle = float(truth[4])
+        else:
+            altitude = float(info.get("altitude", 0.0))
+            vertical_velocity = float(info.get("vertical_velocity", 0.0))
+            distance = float(info.get("distance_to_target", 0.0))
+            speed = float(info.get("speed", 0.0))
+            previous_throttle = float(info.get("throttle", 0.0))
         row = {
             "policy": policy_name,
             "step": step_idx,
             "time": info["sim_time_sec"],
-            "altitude": float(obs[0]),
-            "vertical_velocity": float(obs[1]),
-            "distance": float(obs[2]),
-            "speed": float(obs[3]),
-            "previous_throttle": float(obs[4]),
+            "obs_mode": info.get("obs_mode", ""),
+            "altitude": altitude,
+            "vertical_velocity": vertical_velocity,
+            "distance": distance,
+            "speed": speed,
+            "previous_throttle": previous_throttle,
             "throttle": float(info["throttle"]),
             "thrust_N": float(info.get("thrust_N", 0.0)),
             "reward": float(reward),
@@ -145,6 +165,13 @@ def run_episode(
             "crash": bool(info.get("crash", False)),
             "escape": bool(info.get("escape", False)),
             "timeout": bool(info.get("timeout", False)),
+            "target_visible": bool(info.get("target_visible", False)),
+            "hazard_score": float(info.get("hazard_score", 1.0)),
+            "site_box_xmin": box[0],
+            "site_box_ymin": box[1],
+            "site_box_xmax": box[2],
+            "site_box_ymax": box[3],
+            "progress_assessment": perception.get("progress_assessment"),
         }
         rows.append(row)
 
