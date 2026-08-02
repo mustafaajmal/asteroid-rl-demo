@@ -1,10 +1,19 @@
+"""Plot per-policy and overlaid comparison charts from evaluate CSVs.
+
+Expects ``logs/eval_<policy>_episode_0.csv`` files produced by
+``asteroid_rl.cli.evaluate``. Writes PNGs under ``outputs/plots`` by default.
+"""
+
+from __future__ import annotations
+
 import argparse
 import os
+from argparse import Namespace
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from policy_utils import ensure_dirs
+from asteroid_rl.episode import ensure_dirs
 
 
 METRICS = ["distance", "speed", "throttle", "reward"]
@@ -15,7 +24,15 @@ POLICY_FILES = {
 }
 
 
-def plot_series(df: pd.DataFrame, metric: str, title: str, out_path: str):
+def plot_series(df: pd.DataFrame, metric: str, title: str, out_path: str) -> None:
+    """Save a single metric-versus-time line plot.
+
+    Args:
+        df: Episode dataframe containing ``time`` and ``metric`` columns.
+        metric: Column name to plot on the y-axis.
+        title: Matplotlib plot title.
+        out_path: Destination PNG filesystem path.
+    """
     plt.figure()
     plt.plot(df["time"], df[metric])
     plt.xlabel("time [s]")
@@ -27,10 +44,25 @@ def plot_series(df: pd.DataFrame, metric: str, title: str, out_path: str):
     print(f"Saved {out_path}")
 
 
-def main():
-    parser = argparse.ArgumentParser()
+def parse_args() -> Namespace:
+    """Parse command-line arguments for policy comparison plots.
+
+    Returns:
+        Parsed argparse namespace with an ``outdir`` field.
+    """
+    parser = argparse.ArgumentParser(
+        description="Plot policy comparison charts from evaluate CSVs"
+    )
     parser.add_argument("--outdir", type=str, default="outputs/plots")
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Load available eval CSVs and write per-policy plus comparison plots.
+
+    Missing policy CSV files are skipped with a printed warning.
+    """
+    args = parse_args()
 
     ensure_dirs()
     os.makedirs(args.outdir, exist_ok=True)
@@ -41,7 +73,6 @@ def main():
             print(f"Missing {path}; skipping {policy}")
             continue
         loaded[policy] = pd.read_csv(path)
-
         for metric in METRICS:
             if metric in loaded[policy].columns:
                 plot_series(

@@ -1,53 +1,47 @@
+"""Compare random / scripted / PPO on the fixed-site landing environment.
+
+Runs one episode per available policy, writes per-policy CSVs under ``logs/``,
+and writes tabular summaries under ``outputs/``.
+"""
+
+from __future__ import annotations
+
 import csv
 import os
 from typing import List
 
-import numpy as np
 from stable_baselines3 import PPO
 
-from asteroid_landing_env import AsteroidLandingEnv, LandingEnvConfig
-from policy_utils import (
-    ensure_dirs,
-    random_action,
-    run_episode,
-    scripted_action,
-    write_summary_markdown,
-)
+from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.episode import ensure_dirs, run_episode, write_summary_markdown
+from asteroid_rl.policies import make_action_fn
 
 
 PPO_V2_PATH = "outputs/ppo_asteroid_fixed_site_v2.zip"
 PPO_V1_PATH = "outputs/ppo_asteroid_fixed_site.zip"
 
 
-def main():
+def main() -> None:
+    """Evaluate random, scripted, and PPO (if a checkpoint exists).
+
+    Preference order for PPO checkpoints is ``PPO_V2_PATH`` then
+    ``PPO_V1_PATH``. If neither exists, PPO is recorded as skipped.
+    """
     ensure_dirs()
     config = LandingEnvConfig(seed=0, randomize_reset=False)
     summaries: List[dict] = []
 
-    # Random
-    env = AsteroidLandingEnv(config=config)
-    rng = np.random.default_rng(0)
-    summaries.append(
-        run_episode(
-            "random",
-            lambda obs: random_action(obs, rng=rng),
-            env,
-            "logs/eval_random_episode_0.csv",
+    for policy in ("random", "scripted"):
+        env = AsteroidLandingEnv(config=config)
+        summaries.append(
+            run_episode(
+                policy,
+                make_action_fn(policy, seed=0),
+                env,
+                f"logs/eval_{policy}_episode_0.csv",
+            )
         )
-    )
 
-    # Scripted
-    env = AsteroidLandingEnv(config=config)
-    summaries.append(
-        run_episode(
-            "scripted",
-            scripted_action,
-            env,
-            "logs/eval_scripted_episode_0.csv",
-        )
-    )
-
-    # PPO if available
     ppo_path = None
     if os.path.isfile(PPO_V2_PATH):
         ppo_path = PPO_V2_PATH
@@ -77,15 +71,10 @@ def main():
         print(f"Evaluating PPO checkpoint: {ppo_path}")
         model = PPO.load(ppo_path, device="cpu")
         env = AsteroidLandingEnv(config=config)
-
-        def ppo_action(obs):
-            action, _ = model.predict(obs, deterministic=True)
-            return np.asarray(action, dtype=np.float32).reshape(-1)
-
         summaries.append(
             run_episode(
                 "ppo",
-                ppo_action,
+                make_action_fn("ppo", model=model),
                 env,
                 "logs/eval_ppo_episode_0.csv",
             )

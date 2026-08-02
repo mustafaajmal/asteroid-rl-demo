@@ -97,25 +97,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 CURRENT_FOLDER = os.path.dirname(__file__)
-XML_PATH = f"{CURRENT_FOLDER}/sat_ast_landing.xml"
+REPO_ROOT = os.path.abspath(os.path.join(CURRENT_FOLDER, ".."))
+XML_PATH = os.path.join(REPO_ROOT, "assets", "sat_ast_landing.xml")
 
-AST_OBJ_PATH = os.path.abspath(
-    os.path.join(
-        CURRENT_FOLDER,
-        "..",
-        "dataForExamples",
-        "Itokawa",
-        "ItokawaHayabusa.obj",
-    )
+AST_OBJ_PATH = os.path.join(
+    REPO_ROOT,
+    "assets",
+    "Itokawa",
+    "ItokawaHayabusa.obj",
 )
-AST_TEXTURE_PATH = os.path.abspath(
-    os.path.join(
-        CURRENT_FOLDER,
-        "..",
-        "dataForExamples",
-        "Itokawa",
-        "ItokawaGrayscale.jpg",
-    )
+AST_TEXTURE_PATH = os.path.join(
+    REPO_ROOT,
+    "assets",
+    "Itokawa",
+    "ItokawaGrayscale.jpg",
 )
 ASTEROID_BODY_NAME = "asteroid"
 ASTEROID_VIZ_SCALE = 1000.0  # [-]
@@ -258,8 +253,7 @@ def run(showPlots: bool = False):
         viz.settings.showSpacecraftAsSprites = -1
         viz.settings.ambient = 0.1
         viz.settings.spacecraftShadowBrightness = 0.07
-        vizSupport.createCustomModel(
-            viz,
+        custom_kwargs = dict(
             modelPath=AST_OBJ_PATH,
             simBodiesToModify=[ASTEROID_BODY_NAME],
             scale=[
@@ -269,9 +263,11 @@ def run(showPlots: bool = False):
             ],
             offset=list(asteroidGeom.pos),
             rotation=list(rbk.EP2Euler321(list(asteroidGeom.quat))),
-            customTexturePath=AST_TEXTURE_PATH,
             shader=1,
         )
+        if os.path.isfile(AST_TEXTURE_PATH):
+            custom_kwargs["customTexturePath"] = AST_TEXTURE_PATH
+        vizSupport.createCustomModel(viz, **custom_kwargs)
 
     # Initialize the simulation
     scSim.InitializeSimulation()

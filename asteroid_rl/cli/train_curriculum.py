@@ -1,22 +1,21 @@
-"""
-Phase 1C: controlled reset-randomization curriculum (no Scenic).
+"""Phase 1C controlled reset-randomization curriculum (no Scenic).
 
-Stages:
-  0 fixed start
-  1 small distance randomization
-  2 distance + vertical velocity
-  3 distance + velocity + small lateral offset
+Trains PPO through staged amounts of start-state noise: fixed start, then small
+distance, velocity, and lateral randomization. Each stage saves its own
+checkpoint under ``outputs/``.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+from argparse import Namespace
+from typing import Any, Dict
 
 from stable_baselines3 import PPO
 
-from asteroid_landing_env import AsteroidLandingEnv, LandingEnvConfig
-from policy_utils import ensure_dirs
+from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.episode import ensure_dirs
 
 
 STAGES = [
@@ -61,7 +60,13 @@ STAGES = [
 ]
 
 
-def parse_args():
+def parse_args() -> Namespace:
+    """Parse command-line arguments for curriculum training.
+
+    Returns:
+        Parsed argparse namespace with ``device``, ``seed``,
+        ``timesteps_per_stage``, and ``start_from`` fields.
+    """
     parser = argparse.ArgumentParser(description="Curriculum PPO training")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--seed", type=int, default=0)
@@ -80,22 +85,40 @@ def parse_args():
     return parser.parse_args()
 
 
-def make_config(seed: int, overrides: dict) -> LandingEnvConfig:
+def make_config(seed: int, overrides: Dict[str, Any]) -> LandingEnvConfig:
+    """Build a ``LandingEnvConfig`` with curriculum stage overrides applied.
+
+    Args:
+        seed: Random seed stored on the config.
+        overrides: Mapping of ``LandingEnvConfig`` field names to values to set
+            after constructing the default config (for example randomization
+            flags and deltas).
+
+    Returns:
+        Configured ``LandingEnvConfig`` with ``reuse_sim=True``.
+    """
     cfg = LandingEnvConfig(seed=seed, reuse_sim=True)
     for key, value in overrides.items():
         setattr(cfg, key, value)
     return cfg
 
 
-def main():
+def main() -> None:
+    """Train PPO through each curriculum stage and save checkpoints.
+
+    Optionally loads ``--start-from`` before stage 0. Saves
+    ``outputs/ppo_curriculum_<stage>.zip`` after each stage and
+    ``outputs/ppo_asteroid_curriculum_final.zip`` at the end.
+    """
     args = parse_args()
     ensure_dirs()
 
     model = None
     if args.start_from and os.path.isfile(args.start_from):
         print(f"Loading pretrained checkpoint: {args.start_from}")
-        # Create a temporary env matching stage 0 for load wiring.
-        boot_env = AsteroidLandingEnv(config=make_config(args.seed, STAGES[0]["overrides"]))
+        boot_env = AsteroidLandingEnv(
+            config=make_config(args.seed, STAGES[0]["overrides"])
+        )
         model = PPO.load(args.start_from, env=boot_env, device=args.device)
 
     for stage in STAGES:
@@ -107,7 +130,10 @@ def main():
         )
         cfg = make_config(args.seed, stage["overrides"])
         env = AsteroidLandingEnv(config=cfg)
-        print(f"=== Stage {name}: timesteps={timesteps} overrides={stage['overrides']} ===")
+        print(
+            f"=== Stage {name}: timesteps={timesteps} "
+            f"overrides={stage['overrides']} ==="
+        )
 
         if model is None:
             tb_log = "outputs/tensorboard"

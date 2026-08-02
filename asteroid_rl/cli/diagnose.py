@@ -1,10 +1,30 @@
+"""Diagnose one episode CSV for a likely failure mode.
+
+Reads a per-step episode log (from play or evaluate) and prints aggregate
+telemetry plus a coarse textual failure-mode guess.
+"""
+
+from __future__ import annotations
+
 import argparse
 import os
+from argparse import Namespace
 
 import pandas as pd
 
 
 def diagnose(df: pd.DataFrame) -> str:
+    """Infer a coarse failure mode string from an episode dataframe.
+
+    Args:
+        df: Episode log with columns including ``termination_reason``,
+            ``distance``, and ``speed``. May be empty.
+
+    Returns:
+        Short human-readable diagnosis string such as ``"success"``,
+        ``"high-speed impact near target"``, or
+        ``"policy did not make meaningful progress toward target"``.
+    """
     if df.empty:
         return "empty episode log"
 
@@ -28,10 +48,24 @@ def diagnose(df: pd.DataFrame) -> str:
     return "timeout/unclear; inspect plots"
 
 
-def main():
+def parse_args() -> Namespace:
+    """Parse command-line arguments for episode diagnosis.
+
+    Returns:
+        Parsed argparse namespace with a ``csv_path`` field.
+    """
     parser = argparse.ArgumentParser(description="Diagnose one episode CSV")
     parser.add_argument("csv_path", type=str)
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Load ``csv_path``, print episode stats, and print the diagnosis.
+
+    Raises:
+        FileNotFoundError: If ``csv_path`` does not exist.
+    """
+    args = parse_args()
 
     if not os.path.isfile(args.csv_path):
         raise FileNotFoundError(args.csv_path)

@@ -1,8 +1,22 @@
+"""Quick environment sanity check: reset plus a few fixed-throttle steps.
+
+Verifies that ``AsteroidLandingEnv`` can reset, step, and return observations,
+rewards, and info flags without training or Vizard.
+"""
+
+from __future__ import annotations
+
 import numpy as np
-from asteroid_landing_env import AsteroidLandingEnv
+
+from asteroid_rl.env import AsteroidLandingEnv
 
 
-def main():
+def main() -> None:
+    """Reset the env and run up to 10 steps at throttle ``0.5``.
+
+    Prints observation, reward, termination flags, reward terms, and info
+    flags each step. Stops early if the episode terminates or truncates.
+    """
     env = AsteroidLandingEnv()
     obs, info = env.reset()
     print("reset obs:", obs)

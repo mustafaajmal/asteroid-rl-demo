@@ -1,4 +1,4 @@
-# Train PPO v2 in short process-restart chunks to avoid Basilisk Windows
+# Train PPO in short process-restart chunks to avoid Basilisk Windows
 # access-violation crashes during repeated SimBaseClass teardown.
 param(
     [int]$TotalTimesteps = 20000,
@@ -10,7 +10,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 .\.venv\Scripts\Activate.ps1
-$env:PYTHONPATH = "$PWD\src;$env:PYTHONPATH"
 
 New-Item -ItemType Directory -Force -Path outputs, outputs\checkpoints | Out-Null
 
@@ -27,9 +26,8 @@ while ($completed -lt $TotalTimesteps) {
         $resumeArg = @("--resume", $Out)
     }
 
-    & python src\train_fixed_site_ppo_v2.py `
+    & python -m asteroid_rl.cli.train_ppo `
         --timesteps $thisChunk `
-        --chunk-size $thisChunk `
         --device $Device `
         --seed $Seed `
         --out $Out `

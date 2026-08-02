@@ -1,15 +1,31 @@
+"""Train fixed-site PPO on the asteroid landing environment.
+
+Runs Stable-Baselines3 PPO against ``AsteroidLandingEnv`` with a fixed target
+and truth-state observations. Saves periodic checkpoints and a final zip under
+``outputs/``.
+"""
+
+from __future__ import annotations
+
 import argparse
 import os
+from argparse import Namespace
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 
-from asteroid_landing_env import AsteroidLandingEnv, LandingEnvConfig
-from policy_utils import ensure_dirs
+from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.episode import ensure_dirs
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train fixed-site PPO v2")
+def parse_args() -> Namespace:
+    """Parse command-line arguments for PPO training.
+
+    Returns:
+        Parsed argparse namespace with ``timesteps``, ``device``, ``seed``,
+        ``out``, and ``resume`` fields.
+    """
+    parser = argparse.ArgumentParser(description="Train fixed-site PPO")
     parser.add_argument("--timesteps", type=int, default=20000)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--seed", type=int, default=0)
@@ -22,7 +38,12 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
+    """Construct the env, train or resume PPO, and save the final checkpoint.
+
+    Creates ``outputs/checkpoints`` for intermediate saves. If ``--resume``
+    points to an existing zip, training continues from that model.
+    """
     args = parse_args()
     ensure_dirs()
     os.makedirs("outputs/checkpoints", exist_ok=True)
