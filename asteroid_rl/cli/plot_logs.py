@@ -9,8 +9,9 @@ import argparse
 import os
 from argparse import Namespace
 
-import matplotlib.pyplot as plt
 import pandas as pd
+
+from asteroid_rl.plotting import plot_metric_vs_time
 
 
 def parse_args() -> Namespace:
@@ -40,15 +41,12 @@ def main() -> None:
     for col in ["distance", "speed", "throttle", "reward"]:
         if col not in df.columns:
             continue
-        plt.figure()
-        plt.plot(df["time"], df[col])
-        plt.xlabel("time [s]")
-        plt.ylabel(col)
-        plt.title(f"{col} vs time")
-        out = os.path.join(args.outdir, f"{col}_plot.png")
-        plt.savefig(out, dpi=150, bbox_inches="tight")
-        print(f"Saved {out}")
-        plt.close()
+        plot_metric_vs_time(
+            df,
+            col,
+            f"{col} vs time",
+            os.path.join(args.outdir, f"{col}_vs_time.png"),
+        )
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from asteroid_rl.episode import ensure_dirs
+from asteroid_rl.plotting import plot_metric_vs_time
 
 
 METRICS = ["distance", "speed", "throttle", "reward"]
@@ -22,26 +23,6 @@ POLICY_FILES = {
     "scripted": "logs/eval_scripted_episode_0.csv",
     "ppo": "logs/eval_ppo_episode_0.csv",
 }
-
-
-def plot_series(df: pd.DataFrame, metric: str, title: str, out_path: str) -> None:
-    """Save a single metric-versus-time line plot.
-
-    Args:
-        df: Episode dataframe containing ``time`` and ``metric`` columns.
-        metric: Column name to plot on the y-axis.
-        title: Matplotlib plot title.
-        out_path: Destination PNG filesystem path.
-    """
-    plt.figure()
-    plt.plot(df["time"], df[metric])
-    plt.xlabel("time [s]")
-    plt.ylabel(metric)
-    plt.title(title)
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"Saved {out_path}")
 
 
 def parse_args() -> Namespace:
@@ -75,7 +56,7 @@ def main() -> None:
         loaded[policy] = pd.read_csv(path)
         for metric in METRICS:
             if metric in loaded[policy].columns:
-                plot_series(
+                plot_metric_vs_time(
                     loaded[policy],
                     metric,
                     f"{policy} {metric} vs time",

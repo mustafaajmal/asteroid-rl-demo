@@ -8,7 +8,7 @@ through ``vizInterface`` (same path used by Basilisk OpNav scenarios).
 from __future__ import annotations
 
 import ctypes
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence
 
 import numpy as np
 

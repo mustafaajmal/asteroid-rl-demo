@@ -208,8 +208,39 @@ def build_perception_stub(
     }
 
 
+# Approximate scale for normalizing site depth into an inverse-depth cue ~[0, 1].
+_DEPTH_REF_M = 200.0
+
+
+def perception_policy_features(
+    perception: Optional[Dict[str, Any]],
+) -> np.ndarray:
+    """Pack camera-stub fields into the RL / Dict-obs feature vector.
+
+    Args:
+        perception: Dict from ``build_perception_stub``, or ``None``.
+
+    Returns:
+        Shape ``(5,)`` ``float32``:
+        ``[visible, box_center_u, box_center_v, hazard_score, inv_depth]``.
+    """
+    if not perception:
+        return np.zeros(5, dtype=np.float32)
+    box = perception.get("landing_site_box") or [0, 0, 0, 0]
+    visible = 1.0 if perception.get("target_visible") else 0.0
+    cu = 0.5 * (float(box[0]) + float(box[2]))
+    cv = 0.5 * (float(box[1]) + float(box[3]))
+    hazard = float(perception.get("hazard_score", 1.0))
+    depth = float(perception.get("site_depth_m", 0.0))
+    inv_depth = float(np.clip(_DEPTH_REF_M / max(depth, 1.0), 0.0, 1.0))
+    if visible < 0.5:
+        inv_depth = 0.0
+        cu, cv = 0.5, 0.5
+    return np.array([visible, cu, cv, hazard, inv_depth], dtype=np.float32)
+
+
 def perception_feature_vector(perception: Optional[Dict[str, Any]]) -> np.ndarray:
-    """Pack key perception fields into a short float vector for controllers.
+    """Pack visibility / box center / hazard for scripted control (no depth).
 
     Args:
         perception: Dict from ``build_perception_stub``, or ``None``.
@@ -218,13 +249,4 @@ def perception_feature_vector(perception: Optional[Dict[str, Any]]) -> np.ndarra
         Shape ``(4,)`` ``float32`` vector
         ``[visible, box_center_u, box_center_v, hazard_score]``.
     """
-    if not perception:
-        return np.zeros(4, dtype=np.float32)
-    box = perception.get("landing_site_box") or [0, 0, 0, 0]
-    visible = 1.0 if perception.get("target_visible") else 0.0
-    cu = 0.5 * (float(box[0]) + float(box[2]))
-    cv = 0.5 * (float(box[1]) + float(box[3]))
-    return np.array(
-        [visible, cu, cv, float(perception.get("hazard_score", 1.0))],
-        dtype=np.float32,
-    )
+    return perception_policy_features(perception)[:4].astype(np.float32)

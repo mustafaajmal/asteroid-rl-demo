@@ -10,10 +10,9 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-OBS_MODES = ("truth", "sensors", "perception")
+from asteroid_rl.perception import perception_policy_features
 
-# Approximate scales for normalizing perception depth into ~[0, 1].
-_DEPTH_REF_M = 200.0
+OBS_MODES = ("truth", "sensors", "perception")
 
 
 def validate_obs_mode(mode: str) -> str:
@@ -148,34 +147,6 @@ def encode_agent_observation(
     return obs.astype(np.float32)
 
 
-def perception_policy_features(
-    perception: Optional[Dict[str, Any]],
-) -> np.ndarray:
-    """Pack camera-stub fields into a fixed feature vector for RL.
-
-    Args:
-        perception: Dict from ``build_perception_stub``, or ``None``.
-
-    Returns:
-        Shape ``(5,)`` ``float32``:
-        ``[visible, box_center_u, box_center_v, hazard_score, inv_depth]``.
-    """
-    if not perception:
-        return np.zeros(5, dtype=np.float32)
-    box = perception.get("landing_site_box") or [0, 0, 0, 0]
-    visible = 1.0 if perception.get("target_visible") else 0.0
-    cu = 0.5 * (float(box[0]) + float(box[2]))
-    cv = 0.5 * (float(box[1]) + float(box[3]))
-    hazard = float(perception.get("hazard_score", 1.0))
-    depth = float(perception.get("site_depth_m", 0.0))
-    # Inverse depth in ~[0, 1]: nearer → larger (useful landing cue).
-    inv_depth = float(np.clip(_DEPTH_REF_M / max(depth, 1.0), 0.0, 1.0))
-    if visible < 0.5:
-        inv_depth = 0.0
-        cu, cv = 0.5, 0.5
-    return np.array([visible, cu, cv, hazard, inv_depth], dtype=np.float32)
-
-
 def _maybe_noise(
     obs: np.ndarray,
     noise_std: float,
@@ -200,20 +171,3 @@ def _maybe_noise(
         out = out + generator.normal(0.0, noise_std, size=out.shape).astype(np.float32)
         out[clip_throttle_idx] = float(np.clip(out[clip_throttle_idx], 0.0, 1.0))
     return out
-
-
-def mode_description(mode: str) -> str:
-    """One-line human description of an observation mode.
-
-    Args:
-        mode: Observation mode name.
-
-    Returns:
-        Short description string.
-    """
-    mode = validate_obs_mode(mode)
-    return {
-        "truth": "privileged simulator state (cheat / scaffolding)",
-        "sensors": "altimeter + rate-like scalars (no site distance)",
-        "perception": "camera-stub features only (VLM schema path)",
-    }[mode]

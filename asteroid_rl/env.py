@@ -260,10 +260,6 @@ class LandingEnvConfig:
         initial_vertical_velocity_delta: Half-range for velocity randomization, m/s.
         randomize_lateral_offset: Perturb start position in the lateral plane.
         lateral_offset_delta: Half-range for each lateral axis, meters.
-        success_radius: Deprecated alias retained for older callers; unused when
-            surface termination is active.
-        crash_radius: Deprecated alias retained for older callers; unused when
-            surface termination is active.
     """
 
     max_thrust: float = 275.0
@@ -281,10 +277,6 @@ class LandingEnvConfig:
     crash_speed: float = 2.0
     penetration_altitude: float = 0.0
     escape_radius: float = 1000.0
-
-    # Backward-compatible unused aliases (body-origin era).
-    success_radius: float = 5.0
-    crash_radius: float = 5.0
 
     # Shaped so coasting into a crash is worse than braking (see _compute_reward).
     progress_weight: float = 2.0
@@ -364,9 +356,6 @@ class LandingEnvConfig:
         if self.use_flat_surface:
             target[2] = float(self.flat_surface_z)
         return target
-
-
-LandingConfig = LandingEnvConfig
 
 
 @dataclass
@@ -908,15 +897,6 @@ class AsteroidLandingEnv(gym.Env):
             rng=self._np_random or np.random.default_rng(self.config.seed),
         )
 
-    def _get_obs(self) -> np.ndarray:
-        """Backward-compatible alias returning the agent observation.
-
-        Returns:
-            Policy observation for the active ``obs_mode``.
-        """
-        truth = self._get_truth_vector()
-        return self._get_agent_obs(truth)
-
     def _compute_reward(
         self, prev_obs: np.ndarray, obs: np.ndarray, throttle: float
     ) -> Tuple[float, dict]:
@@ -1083,23 +1063,6 @@ def _find_vizard_app() -> Optional[str]:
         if os.path.isdir(path):
             return path
     return None
-
-
-def _launch_vizard_livestream(port: str = "5556") -> None:
-    """Open Vizard in visible liveStream mode.
-
-    Args:
-        port: TCP port that Basilisk ``vizInterface`` is listening on.
-    """
-    from asteroid_rl.camera import launch_vizard_for_camera
-
-    launch_vizard_for_camera(
-        port=port,
-        show_gui=True,
-        find_app_fn=_find_vizard_app,
-        sleep_fn=time.sleep,
-        popen_fn=subprocess.Popen,
-    )
 
 
 def _setup_vizard(

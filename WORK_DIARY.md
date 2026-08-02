@@ -139,6 +139,25 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 3. Do not enable `point_every_step` by default.
 4. `--viz` implies instrument camera enable.
 
+### Dead-code cleanup / light refactor
+
+- **Prompt / goal:** Find redundant/unused code; delete only what’s clearly dead; refactor duplicates.
+- **Removed (dead):**
+  - `asteroid_rl/sim.py` — unused re-export shim (nothing imported it).
+  - `env._launch_vizard_livestream` — superseded by direct `launch_vizard_for_camera` in `_setup_vizard`.
+  - `env._get_obs` alias, `LandingConfig` alias, deprecated `success_radius` / `crash_radius`.
+  - `observations.mode_description` (zero callers).
+  - Unused `Tuple` import in `camera.py`.
+- **Refactored:**
+  - Perception packing unified in `perception.py` (`perception_policy_features` 5-D; `perception_feature_vector` = first 4).
+  - Shared `asteroid_rl/plotting.py` used by `cli/plot_logs` and `cli/plot_comparison`.
+- **Left alone on purpose:**
+  - `examples/` Basilisk dump (large; mesh/XML fallbacks still referenced from `env.py`).
+  - `vendor/` reference scenario.
+  - `bsk_rl_api`, `train_curriculum`, `plot_logs` CLIs (entrypoints / intentional stubs).
+  - Stale `WORK_SUMMARY.md` (historical; superseded by README + this diary — not deleted).
+  - Phantom `src/` in some IDE indexes — **not on disk / not in git**.
+
 ---
 
 ## Template for next entries
