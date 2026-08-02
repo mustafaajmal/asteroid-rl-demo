@@ -72,6 +72,10 @@ def scripted_action(obs, info: Optional[Dict[str, Any]] = None) -> np.ndarray:
         # Plan: commit when hazard is low and site is visible.
         throttle = max(throttle, 0.35 if descent_rate > 0.4 else throttle)
 
+    # Mission search mode (env also gates); soft-coast while searching high up.
+    if info.get("mission_mode") == "search" and altitude > 25.0:
+        throttle = min(throttle, 0.25)
+
     return np.array([float(np.clip(throttle, 0.0, 1.0))], dtype=np.float32)
 
 

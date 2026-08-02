@@ -33,15 +33,17 @@ from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, macros
 from Basilisk.utilities import vizSupport
 
+from asteroid_rl.mission import MissionConfig, MissionState, mission_throttle_gate, update_mission
 from asteroid_rl.observations import (
     encode_agent_observation,
     observation_dim,
     pack_truth_vector,
     validate_obs_mode,
 )
-from asteroid_rl.perception import build_perception_stub
 from asteroid_rl.pointing import apply_pointing, mrp_point_boresight_at
+from asteroid_rl.scenic_reset import scenic_like_or_default
 from asteroid_rl.surface import default_landing_site, get_surface_map
+from asteroid_rl.vlm import DEFAULT_VLM_MODEL, PerceptionBackend
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _ASSETS_DIR = os.path.join(_REPO_ROOT, "assets")
@@ -254,6 +256,13 @@ class LandingEnvConfig:
             destabilize MuJoCo free-joint dynamics; off by default).
         light_randomize: If True, enable a mild start-state randomization bundle
             (distance / lateral / vertical-velocity) without Scenic.
+        scenic_like_randomize: If True, sample PDF-style random starts within
+            visibility range (no Scenic package required).
+        perception_backend: ``geometry``, ``vlm``, or ``auto`` (VLM with fallback).
+        vlm_model_name: Hugging Face id for the vision-language model.
+        vlm_device: Torch device for VLM inference.
+        enable_mission_search: If True, hazard-gated search-then-land mode.
+        hazard_commit_threshold: Commit landing when hazard is at or below this.
         randomize_initial_distance: Perturb start distance along approach axis.
         initial_distance_delta: Half-range for distance randomization, meters.
         randomize_initial_vertical_velocity: Perturb approach-axis velocity.
@@ -314,10 +323,20 @@ class LandingEnvConfig:
     camera_width: int = 64
     camera_height: int = 64
 
-    # Scripted pointing + light domain randomization (no Scenic).
+    # Scripted pointing + light domain randomization (no Scenic package).
     auto_point: bool = True
     point_every_step: bool = False
     light_randomize: bool = False
+    scenic_like_randomize: bool = False
+
+    # Perception source for info["perception"] / obs_mode=perception features.
+    perception_backend: str = "geometry"
+    vlm_model_name: str = DEFAULT_VLM_MODEL
+    vlm_device: str = "cpu"
+
+    # Planning-doc hazard gate: search until hazard <= threshold then land.
+    enable_mission_search: bool = False
+    hazard_commit_threshold: float = 0.10
 
     randomize_initial_distance: bool = False
     initial_distance_delta: float = 0.0
@@ -448,6 +467,17 @@ class AsteroidLandingEnv(gym.Env):
         self._np_random: Optional[np.random.Generator] = None
         self.surface = get_surface_map()
         self._sigma_BN = np.zeros(3, dtype=np.float64)
+        self._perception = PerceptionBackend(
+            self.config.perception_backend,
+            model_name=self.config.vlm_model_name,
+            device=self.config.vlm_device,
+        )
+        self._mission = MissionState()
+        self._mission_cfg = MissionConfig(
+            enabled=bool(self.config.enable_mission_search),
+            hazard_commit_threshold=float(self.config.hazard_commit_threshold),
+        )
+        self._scenic_sigma: Optional[np.ndarray] = None
 
         self.action_space = spaces.Box(
             low=np.array([0.0], dtype=np.float32),
@@ -482,6 +512,9 @@ class AsteroidLandingEnv(gym.Env):
             self._np_random = np.random.default_rng(effective_seed)
 
         initial_position, initial_velocity = self._sample_initial_state()
+        self._mission = MissionState(
+            mode="search" if self._mission_cfg.enabled else "land"
+        )
 
         if self.handles is None or not self.config.reuse_sim:
             self.handles = build_sim(
@@ -499,6 +532,11 @@ class AsteroidLandingEnv(gym.Env):
 
         if self.config.auto_point:
             self._point_at_target(initial_position)
+        elif self._scenic_sigma is not None:
+            hub = self.handles.scene.getBody(SPACECRAFT_BODY_NAME)
+            if hasattr(hub, "setAttitude"):
+                hub.setAttitude(self._scenic_sigma.tolist())
+            self._sigma_BN = np.asarray(self._scenic_sigma, dtype=np.float64).reshape(3)
 
         # One dynamics tick so recorder/obs are valid at episode start.
         self._write_throttle(0.0)
@@ -553,14 +591,29 @@ class AsteroidLandingEnv(gym.Env):
         if self.handles is None:
             raise RuntimeError("Environment must be reset before calling step().")
 
-        throttle = float(
+        raw_throttle = float(
             np.clip(np.asarray(action, dtype=np.float32).reshape(-1)[0], 0.0, 1.0)
+        )
+        prev_truth = self._get_truth_vector()
+        pre_perception = self._build_perception(prev_truth)
+        r_now, _v_now = self._get_latest_state()
+        self._mission = update_mission(
+            self._mission,
+            perception=pre_perception,
+            position_N=r_now,
+            target_N=self.config.target_array(),
+            altitude_m=float(prev_truth[0]),
+            config=self._mission_cfg,
+        )
+        throttle, mission_reason = mission_throttle_gate(
+            raw_throttle,
+            state=self._mission,
+            altitude_m=float(prev_truth[0]),
+            config=self._mission_cfg,
         )
         thrust_N = float(throttle * self.config.max_thrust)
 
-        prev_truth = self._get_truth_vector()
         if self.config.auto_point and self.config.point_every_step:
-            r_now, _v_now = self._get_latest_state()
             self._point_at_target(r_now)
         self._write_throttle(throttle)
         self._advance_sim(self.config.control_dt)
@@ -591,6 +644,10 @@ class AsteroidLandingEnv(gym.Env):
                 "timeout": reason == "timeout" or (truncated and not terminated),
                 "obs_mode": self.config.obs_mode,
                 "truth_state": truth.copy(),
+                "mission_mode": self._mission.mode,
+                "mission_gate": mission_reason,
+                "raw_throttle": raw_throttle,
+                "best_hazard": float(self._mission.best_hazard),
             }
         )
 
@@ -657,6 +714,9 @@ class AsteroidLandingEnv(gym.Env):
             "perception": perception,
             "target_visible": bool(perception.get("target_visible", False)),
             "hazard_score": float(perception.get("hazard_score", 1.0)),
+            "perception_source": perception.get("perception_source", "geometry"),
+            "mission_mode": self._mission.mode,
+            "best_hazard": float(self._mission.best_hazard),
         }
 
     def _point_at_target(self, position_N: np.ndarray) -> None:
@@ -686,7 +746,7 @@ class AsteroidLandingEnv(gym.Env):
             pass
 
     def _build_perception(self, truth: np.ndarray) -> dict:
-        """Build the geometry perception stub for the current state.
+        """Build perception via geometry stub and/or VLM camera backend.
 
         Args:
             truth: Current privileged 5-D truth vector (altitude at index 0).
@@ -700,14 +760,22 @@ class AsteroidLandingEnv(gym.Env):
                 "landing_site_box": [0.0, 0.0, 0.0, 0.0],
                 "hazard_score": 1.0,
                 "progress_assessment": "no sim",
+                "perception_source": "none",
             }
         r, v = self._get_latest_state()
-        return build_perception_stub(
+        rgb = None
+        if self.config.enable_camera or self._perception.active == "vlm":
+            rgb = self.render()
+        site = self.config.target_array()
+        if self._mission.candidate_site_N is not None:
+            site = self._mission.candidate_site_N
+        return self._perception(
             position_N=r,
             velocity_N=v,
             sigma_BN=self._sigma_BN,
-            target_N=self.config.target_array(),
+            target_N=site,
             altitude_m=float(truth[0]),
+            rgb=rgb,
         )
 
     def _sample_initial_state(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -715,12 +783,21 @@ class AsteroidLandingEnv(gym.Env):
 
         When randomization flags in ``config`` are enabled, perturbs the default
         approach state along the radial/lateral axes and/or with isotropic noise.
+        ``scenic_like_randomize`` uses the PDF-style visibility-range sampler.
 
         Returns:
             Tuple ``(position_N, velocity_N)`` as shape ``(3,)`` ``float64`` arrays.
         """
         rng = self._np_random or np.random.default_rng(self.config.seed)
         target = self.config.target_array()
+        self._scenic_sigma = None
+        if self.config.scenic_like_randomize:
+            position, velocity, sigma = scenic_like_or_default(
+                target, rng, enabled=True
+            )
+            self._scenic_sigma = sigma
+            return position, velocity
+
         position = np.array(DEFAULT_INITIAL_POSITION, dtype=np.float64)
         velocity = np.array(DEFAULT_INITIAL_VELOCITY, dtype=np.float64)
 

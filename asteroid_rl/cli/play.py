@@ -98,6 +98,23 @@ def parse_args() -> Namespace:
         default="truth",
         help="Policy observation mode (reward still uses simulator truth)",
     )
+    parser.add_argument(
+        "--perception",
+        type=str,
+        choices=("geometry", "vlm", "auto"),
+        default="geometry",
+        help="Perception backend for info JSON (vlm needs camera + weights)",
+    )
+    parser.add_argument(
+        "--mission-search",
+        action="store_true",
+        help="Enable hazard-gated search-then-land mission mode",
+    )
+    parser.add_argument(
+        "--scenic-like",
+        action="store_true",
+        help="PDF-style randomized start within visibility (no Scenic package)",
+    )
     return parser.parse_args()
 
 
@@ -137,6 +154,9 @@ def main() -> None:
         use_flat_surface=bool(args.flat_surface),
         obs_noise_std=float(args.obs_noise),
         obs_mode=str(args.obs_mode),
+        perception_backend=str(args.perception),
+        enable_mission_search=bool(args.mission_search),
+        scenic_like_randomize=bool(args.scenic_like),
     )
     env = AsteroidLandingEnv(config=config)
 

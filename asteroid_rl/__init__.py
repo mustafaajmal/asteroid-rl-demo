@@ -18,6 +18,7 @@ Command-line tools live under ``asteroid_rl.cli`` (play, train, evaluate, etc.).
 from asteroid_rl.bsk_rl_api import BskRlDictObservationEnv, make_bsk_rl_env
 from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
 from asteroid_rl.observations import OBS_MODES
+from asteroid_rl.vlm import PerceptionBackend
 
 __all__ = [
     "AsteroidLandingEnv",
@@ -25,4 +26,5 @@ __all__ = [
     "BskRlDictObservationEnv",
     "make_bsk_rl_env",
     "OBS_MODES",
+    "PerceptionBackend",
 ]

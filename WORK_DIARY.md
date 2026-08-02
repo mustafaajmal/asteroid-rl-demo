@@ -23,25 +23,26 @@ Before coding on this repo:
 
 ## Current state (edit in place)
 
-- **Repo role:** Phase-1 fixed-site asteroid landing RL on Basilisk + MuJoCo + Gymnasium + SB3 PPO. Not full Scenic / VLM / BSK-RL yet.
+- **Repo role:** Phase-1 fixed-site asteroid landing RL on Basilisk + MuJoCo + Gymnasium + SB3 PPO. Planning-doc stack largely scaffolded (VLM/Scenic-like/mission).
 - **Package root:** `asteroid_rl/` at repo root (not `src/`).
-- **Success metric:** Surface altitude / speed / lateral (Itokawa heightmap or optional flat plane). Not body-origin proxy.
-- **Default obs:** Still `obs_mode=truth` for scaffolding; **sensors** and **perception** modes exist so policy need not see privileged site distance.
-- **Reward / termination:** Always clean simulator truth (privileged), regardless of `obs_mode`.
-- **Camera:** Basilisk instrument camera via Vizard OpNav (not MuJoCo offscreen).
-- **Last short PPO (20k, truth):** Saved `outputs/ppo_asteroid_fixed_site_v2.zip`; eval ~**-473** (still crash-level). Scripted baseline still gets `safe_landing`.
-- **Hardware split:** M2 = iterate / short trains / Vizard; home 7600X3D+5080 = long PPO (`--device cpu` for MLP; GPU later for VLM).
+- **Success metric:** Surface altitude / speed / lateral (Itokawa heightmap or optional flat plane).
+- **PPO gate (truth):** **Met on M2** via BC warm-start + flat→mesh curriculum. `outputs/ppo_asteroid_fixed_site_v2.zip` gets **`safe_landing` on flat and mesh**.
+- **Sensors obs:** `outputs/ppo_sensors_curriculum.zip` also lands on mesh.
+- **Perception obs:** scaffolding + short train exist; PPO not yet reliably landing (needs longer home-PC train / better BC).
+- **VLM:** [`vlm.py`](asteroid_rl/vlm.py) Qwen backend with geometry fallback (`--perception auto|vlm`); needs optional `transformers` + weights.
+- **Mission search:** [`mission.py`](asteroid_rl/mission.py) hazard commit (~0.10); `--mission-search`.
+- **Scenic-like:** [`scenic_reset.py`](asteroid_rl/scenic_reset.py) PDF-style random starts; `--scenic-like` (no Scenic package).
+- **Hardware:** M2 short curriculum; home PC for long PPO + VLM GPU.
 
 ---
 
 ## Open threads (edit in place)
 
-- [ ] Longer PPO on home PC (1e5–5e5+), still `--device cpu`.
-- [ ] Train / compare `--obs-mode sensors` and `--obs-mode perception` (honest policy obs).
-- [ ] Perception stub still filled from **geometry**, not camera pixels / VLM — next real step toward non-cheat sensing.
-- [ ] Optional: curriculum / flat-surface pretrain then mesh.
-- [ ] Scenic, Qwen VLM, full `bsk_rl` package — still out of scope.
-- [ ] Undertrained PPO often coasts (throttle→0) then crashes; reward reshape + `ent_coef` help but need more steps.
+- [ ] Longer home-PC curriculum (`--timesteps-flat/mesh 1e5+`) especially `--obs-mode perception`.
+- [ ] Install transformers + Qwen weights; run `--perception vlm --camera` for real image→JSON.
+- [ ] Improve scenic-like + miss-pointing so search/re-acquire works (scripted crashed in one smoke).
+- [ ] Optional real Scenic package later (sampler API already matches intent).
+- [ ] Full `bsk_rl` still optional.
 
 ---
 
@@ -138,6 +139,16 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 2. `--device cpu` for SB3 MLP — env/Basilisk bound; GPU reserved for future VLM.
 3. Do not enable `point_every_step` by default.
 4. `--viz` implies instrument camera enable.
+
+### Planning-doc next steps implemented
+
+- **prove-ppo:** `train_curriculum` flat→mesh + BC warm-start (`imitate.py`). Truth PPO lands flat+mesh (`ppo_asteroid_fixed_site_v2.zip` / `ppo_asteroid_curriculum_final.zip`).
+- **honest-obs:** sensors curriculum lands; perception short-train/benchmark wired (PPO perception still weak).
+- **bench-pdf:** `cli/benchmark_suite.py` flat/mesh × obs modes × scripted/PPO → `outputs/benchmark_suite_summary.csv`.
+- **vlm-hook:** `vlm.PerceptionBackend` + env `perception_backend`; CLI `--perception`.
+- **site-search:** `mission.py` + `enable_mission_search` / `--mission-search`.
+- **scenic-later:** `scenic_reset.py` + `--scenic-like` (no Scenic pkg).
+- **Gotcha:** curriculum must not overwrite truth `v2` zip when training other obs modes (fixed). Best-model paths now include `obs_mode` in the name.
 
 ### Removed Windows chunked-train script
 

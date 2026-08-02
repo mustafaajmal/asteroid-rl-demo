@@ -18,10 +18,14 @@ asteroid_rl/
   camera.py           # Basilisk instrument camera helpers
   pointing.py         # scripted attitude pointing at the site
   perception.py       # geometry stub (VLM JSON schema)
-  policies.py         # scripted / random / PPO (+ perception-aware scripted)
+  vlm.py              # Qwen VLM backend (falls back to geometry)
+  mission.py          # hazard-gated search-then-land
+  scenic_reset.py     # PDF-style random starts (no Scenic pkg required)
+  imitate.py          # behavior-clone warm-start from scripted
+  policies.py         # scripted / random / PPO
   episode.py          # shared run_episode / CSV / summaries
   bsk_rl_api.py       # Dict-obs adapter shaped like BSK-RL (partial)
-  cli/                # play, train, evaluate, benchmark_baseline, …
+  cli/                # play, train_curriculum, benchmark_suite, …
 assets/               # MuJoCo XML + Itokawa mesh + heightmap
 vendor/               # original Basilisk scenario (reference)
 ```
@@ -60,15 +64,25 @@ python -m asteroid_rl.cli.benchmark_baseline --episodes 3
 python -m asteroid_rl.cli.benchmark_baseline --episodes 3 --randomize
 python -m asteroid_rl.cli.benchmark_baseline --episodes 3 --flat-surface
 
-# Train / evaluate (default: eval callback + throttle logging + ent_coef)
+# Flat→mesh curriculum + BC warm-start (planning-doc order)
+python -m asteroid_rl.cli.train_curriculum --timesteps-per-stage 8000 --device cpu
+# Home PC longer:
+python -m asteroid_rl.cli.train_curriculum --timesteps-flat 100000 --timesteps-mesh 100000 --device cpu
+
+# Train / evaluate single-stage PPO
 python -m asteroid_rl.cli.train_ppo --timesteps 20000 --device cpu --seed 0
-python -m asteroid_rl.cli.train_ppo --timesteps 100000 --flat-surface --device cpu
-python -m asteroid_rl.cli.train_ppo --timesteps 50000 --obs-noise 0.05 --device cpu
-# Honest-ish obs (no privileged site distance / pose in the policy vector):
 python -m asteroid_rl.cli.train_ppo --timesteps 20000 --obs-mode sensors --device cpu
 python -m asteroid_rl.cli.train_ppo --timesteps 20000 --obs-mode perception --device cpu
-python -m asteroid_rl.cli.play --policy scripted --obs-mode perception
-python -m asteroid_rl.cli.evaluate
+
+# Planning-doc suite: flat vs mesh × obs modes × scripted/PPO
+python -m asteroid_rl.cli.benchmark_suite --episodes 2
+
+# Mission search / scenic-like / VLM perception (VLM needs optional deps + weights)
+python -m asteroid_rl.cli.play --policy scripted --mission-search
+python -m asteroid_rl.cli.play --policy scripted --scenic-like --no-auto-point
+python -m asteroid_rl.cli.play --policy scripted --perception auto --camera
+
+python -m asteroid_rl.cli.evaluate --obs-mode truth
 python -m asteroid_rl.cli.plot_comparison
 python -m asteroid_rl.cli.diagnose logs/eval_ppo_episode_0.csv
 ```
@@ -142,12 +156,11 @@ This is an adapter only — not a full `bsk_rl` install/integration.
 
 ## Scope
 
-| Included | Excluded (for now) |
-|----------|--------------------|
-| Surface landing site + altitude success | Scenic scenario graphs |
-| Scalar throttle PPO + obs modes | Raw-pixel / VLM (Qwen) inference |
-| Scripted pointing (`auto_point`) | Full BSK-RL package |
-| Perception stub JSON → policy features | 3D force/torque RL actions |
-| Light reset randomization | |
-| Flat-surface + optional obs noise | |
+| Included | Still heavier / optional |
+|----------|---------------------------|
+| Surface landing + flat→mesh curriculum | Full Scenic package (scenic-like sampler instead) |
+| Scalar throttle PPO + BC warm-start | Raw-pixel end-to-end RL |
+| Obs modes truth/sensors/perception | Full `bsk_rl` package |
+| Geometry stub + Qwen VLM backend (fallback) | 3D force/torque actions |
+| Hazard search-then-land mission mode | |
 | Basilisk instrument camera via Vizard | |

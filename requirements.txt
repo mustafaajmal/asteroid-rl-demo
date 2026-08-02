@@ -3,3 +3,7 @@ stable-baselines3
 numpy
 pandas
 matplotlib
+# Optional VLM path (planning-doc Qwen). Geometry stub works without these:
+# transformers
+# torch
+# pillow
