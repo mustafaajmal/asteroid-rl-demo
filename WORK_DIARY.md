@@ -139,6 +139,12 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 3. Do not enable `point_every_step` by default.
 4. `--viz` implies instrument camera enable.
 
+### Removed Windows chunked-train script
+
+- Deleted `scripts/train_fixed_site_ppo_v2_chunked.ps1` and empty `scripts/`.
+- It only wrapped `python -m asteroid_rl.cli.train_ppo` with `--resume` in short process chunks for Basilisk Windows teardown crashes.
+- **Recreatable:** loop calling `train_ppo --timesteps <chunk> --resume <zip> --out <zip>` (Python or shell). Prefer Python/`train_ppo` directly on Mac/Linux.
+
 ### Dead-code cleanup / light refactor
 
 - **Prompt / goal:** Find redundant/unused code; delete only what’s clearly dead; refactor duplicates.
