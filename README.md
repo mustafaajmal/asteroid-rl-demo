@@ -1,33 +1,90 @@
-# Fixed-Site Asteroid Landing RL Proof-of-Life
+# Asteroid Landing RL
 
-Basilisk/MuJoCo asteroid landing with Gymnasium + optional PPO. Success uses
-**altitude above the Itokawa mesh** (or an optional flat plane). A Basilisk
-body-fixed camera (Vizard OpNav) and a **geometry perception stub** (same JSON
-schema as the planned VLM) support the imaging → decision loop without
-Scenic/VLM yet.
+Gymnasium environment and training tooling for soft landing on a small asteroid,
+backed by Basilisk / MuJoCo. The lander uses a fixed (or mission-selected) pad,
+scripted or learned policies, and optional camera / VLM perception.
 
-Cross-session notes for Cursor / multi-machine work live in [`WORK_DIARY.md`](WORK_DIARY.md)
-(append-only). Agent operating instructions (phases, commands, pitfalls, test
-gates) live in [`AGENTS.md`](AGENTS.md) — **read that before non-trivial agent work**.
-Commit the diary when you switch machines.
+For agent workflows, phases, and contracts see [`AGENTS.md`](AGENTS.md).
+Cross-session notes live in [`WORK_DIARY.md`](WORK_DIARY.md).
 
-## Layout
+---
+
+## Repository layout
 
 ```text
-asteroid_rl/
-  environment/   # Gym env, episode runner, observations, surface heightmap
-  dynamics/      # gravity, pointing, orbit / scenic-like starts
-  control/       # policies, mission FSM, nav notes, BC warm-start
-  sensing/       # camera, geometry perception stub, VLM backend
-  adapters/      # BSK-RL-shaped Dict-obs wrapper
-  analysis/      # shared plotting helpers
-  cli/           # play, train_*, evaluate_*, benchmark_*, smoke_test, …
-  paths.py       # repo / assets path anchors
-assets/          # MuJoCo XML + Itokawa mesh + heightmap
-examples/        # optional Basilisk bskExamples dump (asset fallback only)
-scripts/         # one-off diagnostic helpers
-tests/
+asteroid_rl/          Python package (import root)
+assets/               MuJoCo scene + Itokawa mesh / heightmap
+examples/             Basilisk bskExamples dump (optional asset fallback)
+scripts/              One-off diagnostics (not package entrypoints)
+tests/                Pytest suite
+logs/                 Runtime logs (gitignored)
+outputs/              Checkpoints, eval artifacts (gitignored)
 ```
+
+---
+
+## `asteroid_rl/`
+
+Main library. Prefer submodule imports, for example:
+
+```python
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+```
+
+| Path | Focus |
+|------|--------|
+| [`environment/`](asteroid_rl/environment/) | Gymnasium env (`gym_env.py`), episode runner / CSV logging, observation packing (`truth` / `sensors` / `perception` / `orbital`), surface heightmap altitude |
+| [`dynamics/`](asteroid_rl/dynamics/) | Gravity models, attitude pointing, Keplerian / approach / scenic-like episode starts |
+| [`control/`](asteroid_rl/control/) | Scripted and PPO action helpers, mission FSM (search → land), nav notes, behavior-cloning warm-start |
+| [`sensing/`](asteroid_rl/sensing/) | Basilisk instrument camera, geometry perception stub (VLM JSON schema), Qwen VLM backend with geometry fallback |
+| [`adapters/`](asteroid_rl/adapters/) | BSK-RL-shaped Dict-observation wrapper over the Gym env |
+| [`analysis/`](asteroid_rl/analysis/) | Shared Matplotlib helpers for episode CSVs |
+| [`cli/`](asteroid_rl/cli/) | Entrypoints: `play`, `train_*`, `evaluate_*`, `benchmark_*`, `smoke_test`, plotting, diagnose |
+| [`paths.py`](asteroid_rl/paths.py) | Repo root / `assets/` / `examples/` path anchors |
+
+Public re-exports from the package root include `AsteroidLandingEnv`,
+`LandingEnvConfig`, `OBS_MODES`, and `make_bsk_rl_env`.
+
+### CLI modules
+
+Run from the repo root with `PYTHONPATH=.` if needed:
+
+| Module | Role |
+|--------|------|
+| `asteroid_rl.cli.play` | Single episode (scripted / PPO / orbital / autonomous) |
+| `asteroid_rl.cli.smoke_test` | Short env sanity check (`--orbital` optional) |
+| `asteroid_rl.cli.train_ppo` | Phase-1 fixed-site PPO |
+| `asteroid_rl.cli.train_curriculum` | Flat → mesh curriculum + BC warm-start |
+| `asteroid_rl.cli.train_orbital_ppo` | Orbital point+throttle PPO |
+| `asteroid_rl.cli.train_autonomous_ppo` | Mission + upright-gate PPO |
+| `asteroid_rl.cli.evaluate` / `evaluate_orbital` / `evaluate_autonomous` | Multi-episode eval |
+| `asteroid_rl.cli.benchmark_baseline` / `benchmark_suite` | Scripted / PPO comparison suites |
+| `asteroid_rl.cli.plot_logs` / `plot_comparison` / `diagnose` | Log viz and failure diagnosis |
+
+---
+
+## Other directories
+
+| Path | Focus |
+|------|--------|
+| [`assets/`](assets/) | Canonical MuJoCo XML (`sat_ast_landing.xml`) and Itokawa mesh / heightmap used by the env |
+| [`examples/`](examples/) | Upstream Basilisk example tree from `bskExamples`. Not application code; used only if an asset is missing under `assets/` |
+| [`scripts/`](scripts/) | Ad-hoc helpers (hover measurement, upright diagnostics, training publish hooks) |
+| [`tests/`](tests/) | Unit tests (orbit math, obs packing, mission FSM, upright) plus short Basilisk integration smokes |
+| `logs/` | Episode CSVs and training logs (local; gitignored) |
+| `outputs/` | PPO checkpoints and eval summaries (local; gitignored) |
+
+---
+
+## Project docs
+
+| File | Focus |
+|------|--------|
+| [`AGENTS.md`](AGENTS.md) | Mission phases, physics/control contracts, commands, pitfalls |
+| [`WORK_DIARY.md`](WORK_DIARY.md) | Append-only session log and current open threads |
+| [`requirements.txt`](requirements.txt) | Python dependencies (plus install Basilisk via `bsk[all,examples]`) |
+
+---
 
 ## Setup
 
@@ -39,114 +96,10 @@ pip install "bsk[all,examples]"
 pip install -r requirements.txt
 ```
 
-Run commands from the repo root.
-
-## Run
-
 ```bash
-# Sanity check
-python -m asteroid_rl.cli.smoke_test
-
-# Headless episode
-python -m asteroid_rl.cli.play --policy scripted
-python -m asteroid_rl.cli.play --policy scripted --randomize
-python -m asteroid_rl.cli.play --policy scripted --flat-surface
-python -m asteroid_rl.cli.play --policy ppo --model outputs/ppo_asteroid_fixed_site_v2.zip
-
-# Vizard / Basilisk camera
-python -m asteroid_rl.cli.play --policy scripted --viz
-python -m asteroid_rl.cli.play --policy scripted --camera --viz
-python -m asteroid_rl.cli.play --policy scripted --camera --save-frame outputs/plots/navcam.png
-
-# Baseline benchmark (scripted ± light randomization / flat plane)
-python -m asteroid_rl.cli.benchmark_baseline --episodes 3
-python -m asteroid_rl.cli.benchmark_baseline --episodes 3 --randomize
-python -m asteroid_rl.cli.benchmark_baseline --episodes 3 --flat-surface
-
-# Flat→mesh curriculum + BC warm-start (planning-doc order)
-python -m asteroid_rl.cli.train_curriculum --timesteps-per-stage 8000 --device cpu
-# Home PC longer:
-python -m asteroid_rl.cli.train_curriculum --timesteps-flat 100000 --timesteps-mesh 100000 --device cpu
-
-# Train / evaluate single-stage PPO
-python -m asteroid_rl.cli.train_ppo --timesteps 20000 --device cpu --seed 0
-python -m asteroid_rl.cli.train_ppo --timesteps 20000 --obs-mode sensors --device cpu
-python -m asteroid_rl.cli.train_ppo --timesteps 20000 --obs-mode perception --device cpu
-
-# Planning-doc suite: flat vs mesh × obs modes × scripted/PPO
-python -m asteroid_rl.cli.benchmark_suite --episodes 2
-
-# Mission search / scenic-like / VLM perception (VLM needs optional deps + weights)
-python -m asteroid_rl.cli.play --policy scripted --mission-search
-python -m asteroid_rl.cli.play --policy scripted --scenic-like --no-auto-point
-python -m asteroid_rl.cli.play --policy scripted --perception auto --camera
-
-python -m asteroid_rl.cli.evaluate --obs-mode truth
-python -m asteroid_rl.cli.plot_comparison
-python -m asteroid_rl.cli.diagnose logs/eval_ppo_episode_0.csv
+PYTHONPATH=. python -m pytest tests/ -q
+PYTHONPATH=. python -m asteroid_rl.cli.smoke_test
 ```
 
-## Orbital GNC mode (Phase-2 slice)
-
-Elliptical starts about the asteroid COM with **central gravity**, **point + throttle**
-actions, and a scripted GNC baseline:
-
-```bash
-python -m asteroid_rl.cli.play --policy scripted_orbit --orbital
-python -m asteroid_rl.cli.play --policy scripted_orbit --orbital --viz
-python -m asteroid_rl.cli.train_orbital_ppo --timesteps 20000 --bc-episodes 3 --device cpu
-python -m asteroid_rl.cli.play --policy ppo --orbital --model outputs/best_model_orbital/best_model.zip --viz
-```
-
-Phase-1 fixed-approach demos are unchanged (default constant gravity + 1-D throttle).
-
-## Observation modes (policy vs truth)
-
-| `--obs-mode` | Policy sees | Notes |
-|--------------|-------------|-------|
-| `truth` (default) | altitude, vz, **site distance**, speed, throttle | Privileged scaffolding |
-| `sensors` | altimeter, vz, speed, closing-rate, throttle | No site distance / pose |
-| `perception` | visibility, site uv, hazard, inv-depth, throttle | Camera-stub / VLM schema path |
-| `orbital` | rel site xyz, vel xyz, altitude, speed, throttle | Used with `--orbital` / point+throttle |
-
-**Reward and success/crash checks always use clean simulator truth.** That is
-standard privileged learning for the plant; it is not what the policy is
-allowed to condition on under `sensors` / `perception`.
-
-## Perception stub (pre-VLM)
-
-Each step’s `info["perception"]` looks like:
-
-```json
-{
-  "target_visible": true,
-  "landing_site_box": [0.42, 0.55, 0.58, 0.70],
-  "hazard_score": 0.22,
-  "progress_assessment": "site is visible and slightly left of center"
-}
-```
-
-Today this is filled from **truth-state geometry** (`perception.py`). A VLM can
-later replace the same schema. Scripted control already reads it; PPO still uses
-the 5-D truth-state vector.
-
-## BSK-RL-shaped API (partial)
-
-```python
-from asteroid_rl import make_bsk_rl_env
-env = make_bsk_rl_env()
-obs, info = env.reset()  # Dict obs: altitude, perception, hazard_score, …
-```
-
-This is an adapter only — not a full `bsk_rl` install/integration.
-
-## Scope
-
-| Included | Still heavier / optional |
-|----------|---------------------------|
-| Surface landing + flat→mesh curriculum | Full Scenic package (scenic-like sampler instead) |
-| Scalar throttle PPO + BC warm-start | Raw-pixel end-to-end RL |
-| Obs modes truth/sensors/perception | Full `bsk_rl` package |
-| Geometry stub + Qwen VLM backend (fallback) | 3D force/torque actions |
-| Hazard search-then-land mission mode | |
-| Basilisk instrument camera via Vizard | |
+Prefer EvalCallback **best** checkpoints under `outputs/best_model_*/best_model.zip`
+over final training zips when demoing.
