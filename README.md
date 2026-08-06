@@ -113,34 +113,6 @@ Phase-1 fixed-approach demos are unchanged (default constant gravity + 1-D throt
 standard privileged learning for the plant; it is not what the policy is
 allowed to condition on under `sensors` / `perception`.
 
-## Hardware: M2 laptop vs home desktop
-
-| Machine | Best use |
-|---------|----------|
-| **M2 MacBook** | Iterate code, Vizard demos, scripted baseline, short PPO (~2e4–5e4 steps), flat-surface / noise ablation |
-| **Home PC (7600X3D + RTX 5080)** | Long PPO (1e5–5e5+). Env is CPU/Basilisk-bound; keep `--device cpu` for SB3 MLP. GPU mainly for future VLM |
-
-M2-friendly loop:
-
-```bash
-python -m asteroid_rl.cli.smoke_test
-python -m asteroid_rl.cli.benchmark_baseline --episodes 3
-python -m asteroid_rl.cli.benchmark_baseline --episodes 3 --flat-surface
-python -m asteroid_rl.cli.play --policy scripted --viz
-python -m asteroid_rl.cli.train_ppo --timesteps 20000 --device cpu --seed 0
-```
-
-Home-PC long train (same commands; bump timesteps):
-
-```bash
-python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
-# Optional curriculum-style ablations:
-python -m asteroid_rl.cli.train_ppo --timesteps 200000 --flat-surface --device cpu
-python -m asteroid_rl.cli.train_ppo --timesteps 200000 --obs-noise 0.05 --device cpu
-```
-
-Checkpoints: `outputs/ppo_asteroid_fixed_site_v2.zip`, `outputs/checkpoints/`, `outputs/best_model/best_model.zip`. Resume with `--resume path.zip`.
-
 ## Perception stub (pre-VLM)
 
 Each step’s `info["perception"]` looks like:
