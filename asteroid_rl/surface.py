@@ -54,6 +54,14 @@ class SurfaceMap:
         self.res = float(data["res"])
         self.ny, self.nx = self.H.shape
 
+    def contains_xy(self, x: float, y: float) -> bool:
+        """Return True if ``(x, y)`` maps to a finite heightmap cell."""
+        ix = int(round((float(x) - self.xmin) / self.res))
+        iy = int(round((float(y) - self.ymin) / self.res))
+        if ix < 0 or iy < 0 or ix >= self.nx or iy >= self.ny:
+            return False
+        return bool(np.isfinite(self.H[iy, ix]))
+
     def surface_z(self, x: float, y: float) -> float:
         """Return the surface ``z`` under ``(x, y)`` via nearest grid sample.
 
@@ -73,6 +81,30 @@ class SurfaceMap:
         if not np.isfinite(z):
             return -1.0e6
         return z
+
+    def radial_altitude(
+        self,
+        position_N: np.ndarray,
+        *,
+        com_N: np.ndarray,
+        site_N: np.ndarray,
+    ) -> float:
+        """Altitude above a spherical shell through the landing site.
+
+        Used when the craft is outside the heightmap footprint (orbital phase).
+
+        Args:
+            position_N: Hub inertial position, meters.
+            com_N: Asteroid COM inertial position, meters.
+            site_N: Landing-site inertial position, meters.
+
+        Returns:
+            ``||r-com|| - ||site-com||`` in meters.
+        """
+        r = np.asarray(position_N, dtype=np.float64).reshape(3)
+        com = np.asarray(com_N, dtype=np.float64).reshape(3)
+        site = np.asarray(site_N, dtype=np.float64).reshape(3)
+        return float(np.linalg.norm(r - com) - np.linalg.norm(site - com))
 
     def altitude(self, position_N: np.ndarray) -> float:
         """Hub altitude above the local surface.

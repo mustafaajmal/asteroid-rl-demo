@@ -165,30 +165,75 @@ def launch_vizard_for_camera(
         port: TCP port published by ``vizInterface``.
         show_gui: If True, use ``-directComm`` (visible window). If False, use
             ``-noDisplay`` headless OpNav rendering.
-        find_app_fn: Callable returning a Vizard.app path or ``None``.
+        find_app_fn: Callable returning a Vizard.exe / Vizard.app path or ``None``.
         sleep_fn: Sleep callable used after launch.
         popen_fn: Subprocess launcher (``subprocess.Popen``).
     """
+    import os
+
     app = find_app_fn()
     address = f"tcp://localhost:{port}"
     mode = "-directComm" if show_gui else "-noDisplay"
     if app is None:
         print(
-            "Vizard.app not found.\n"
+            "Vizard not found.\n"
             f"Open Vizard manually with {mode} and connect to {address}\n"
+            "Or set VIZARD_PATH to your Vizard.exe / Vizard.app.\n"
             "(Basilisk instrument camera images require a Vizard connection.)"
         )
         return
 
-    # Prefer the MacOS binary path used by Basilisk OpNav examples.
-    binary = app
-    mac_binary = f"{app}/Contents/MacOS/Vizard"
-    import os
-
-    if os.path.isfile(mac_binary):
-        cmd = [mac_binary, "--args", mode, address]
-    else:
-        cmd = ["open", app, "--args", mode, address]
+    cmd = _vizard_launch_cmd(app, mode, address)
     print(f"Launching Vizard for camera: {' '.join(cmd)}")
     popen_fn(cmd)
     sleep_fn(2.5)
+
+
+def launch_vizard_load_file(
+    bin_path: str,
+    *,
+    find_app_fn,
+    popen_fn,
+) -> None:
+    """Open a recorded Vizard ``.bin`` in the Vizard GUI (``-loadFile``).
+
+    Args:
+        bin_path: Absolute path to a ``*_UnityViz.bin`` playback file.
+        find_app_fn: Callable returning a Vizard.exe / Vizard.app path or ``None``.
+        popen_fn: Subprocess launcher (``subprocess.Popen``).
+    """
+    import os
+
+    app = find_app_fn()
+    abs_bin = os.path.abspath(bin_path)
+    if not os.path.isfile(abs_bin):
+        print(f"Vizard bin not found yet: {abs_bin}")
+        return
+    if app is None:
+        print(
+            "Vizard not found. Open Vizard manually and use:\n"
+            f"  Basilisk Message File -> {abs_bin}\n"
+            "Or set VIZARD_PATH to your Vizard.exe / Vizard.app."
+        )
+        return
+    cmd = _vizard_launch_cmd(app, "-loadFile", abs_bin)
+    print(f"Launching Vizard playback: {' '.join(cmd)}")
+    popen_fn(cmd)
+
+
+def _vizard_launch_cmd(app: str, flag: str, value: str) -> list:
+    """Build a platform-appropriate Vizard argv.
+
+    Windows ``.exe`` gets Unity-style args (no macOS ``open --args`` wrapper).
+    macOS prefers the bundle binary, then ``open``.
+    """
+    import os
+
+    if os.path.isfile(app) and app.lower().endswith(".exe"):
+        return [app, flag, value]
+    mac_binary = os.path.join(app, "Contents", "MacOS", "Vizard")
+    if os.path.isfile(mac_binary):
+        return [mac_binary, "--args", flag, value]
+    if os.path.isfile(app):
+        return [app, "--args", flag, value]
+    return ["open", app, "--args", flag, value]

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence, Tuple
@@ -33,14 +34,23 @@ from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, macros
 from Basilisk.utilities import vizSupport
 
+from asteroid_rl.gravity import (
+    DEFAULT_ASTEROID_COM_N,
+    DEFAULT_MU,
+    DEFAULT_SPACECRAFT_MASS_REF,
+    CentralGravity,
+    ConstantGravity,
+)
 from asteroid_rl.mission import MissionConfig, MissionState, mission_throttle_gate, update_mission
 from asteroid_rl.observations import (
     encode_agent_observation,
     observation_dim,
+    pack_orbital_vector,
     pack_truth_vector,
     validate_obs_mode,
 )
-from asteroid_rl.pointing import apply_pointing, mrp_point_boresight_at
+from asteroid_rl.orbit_reset import sample_elliptical_start
+from asteroid_rl.pointing import apply_pointing, apply_pointing_direction
 from asteroid_rl.scenic_reset import scenic_like_or_default
 from asteroid_rl.surface import default_landing_site, get_surface_map
 from asteroid_rl.vlm import DEFAULT_VLM_MODEL, PerceptionBackend
@@ -86,43 +96,6 @@ DEFAULT_INITIAL_POSITION = (0.0, 0.0, 120.0)
 DEFAULT_INITIAL_VELOCITY = (0.0, 0.0, -1.5)
 # Approximate hub height above terrain when landing legs touch (~box + leg).
 NOMINAL_GEAR_CLEARANCE_M = 2.5
-
-
-class ConstantGravity(sysModel.SysModel):
-    """Basilisk SysModel that applies a constant inertial force as "gravity".
-
-    Reads the application-site attitude, rotates ``force_N`` into the site
-    frame, and publishes a ``ForceAtSiteMsg`` for an ``MJForceActuator``.
-
-    Attributes:
-        force_N: Constant force vector in the inertial frame, Newtons.
-        frameInMsg: Reader for the site/spacecraft state message.
-        forceOutMsg: Output force message consumed by the force actuator.
-    """
-
-    def __init__(self, force_N: Sequence[float], *args: Any):
-        """Create the constant-gravity model.
-
-        Args:
-            force_N: Length-3 inertial force vector in Newtons.
-            *args: Forwarded to ``sysModel.SysModel.__init__``.
-        """
-        super().__init__(*args)
-        self.force_N = force_N
-        self.frameInMsg = messaging.SCStatesMsgReader()
-        self.forceOutMsg = messaging.ForceAtSiteMsg()
-
-    def UpdateState(self, CurrentSimNanos: int) -> None:
-        """Recompute and publish the site-frame force for this integrator step.
-
-        Args:
-            CurrentSimNanos: Current Basilisk simulation time in nanoseconds.
-        """
-        frame: messaging.SCStatesMsgPayload = self.frameInMsg()
-        dcm_BN = rbk.MRP2C(frame.sigma_BN)
-        force_B = np.dot(dcm_BN, self.force_N)
-        payload = messaging.ForceAtSiteMsgPayload(force_S=force_B)
-        self.forceOutMsg.write(payload, CurrentSimNanos, self.moduleID)
 
 
 class ThrusterVizMessageWriter(sysModel.SysModel):
@@ -246,8 +219,12 @@ class LandingEnvConfig:
         random_velocity_delta: Uniform velocity jitter half-range, m/s.
         seed: Default RNG seed used when ``reset`` is not given an explicit seed.
         reuse_sim: If True, soft-reset one Basilisk sim across episodes.
-        enable_viz: If True, attach Vizard liveStream when building the sim.
-        enable_camera: If True, attach a Basilisk hub instrument camera (needs Vizard).
+        enable_viz: If True, attach Vizard when building the sim.
+        viz_mode: ``auto`` (live on macOS, save-file on Windows), ``live``
+            (ZeroMQ liveStream — often crashes on Windows libzmq), or ``file``
+            (write a ``.bin`` for Vizard ``-loadFile`` playback).
+        viz_save_file: Optional explicit ``.bin`` path for ``viz_mode=file``.
+        enable_camera: If True, attach a Basilisk hub instrument camera (needs live Vizard).
         camera_width: Instrument-camera image width in pixels.
         camera_height: Instrument-camera image height in pixels.
         auto_point: If True, slew the hub so body -z aims at the landing site
@@ -315,10 +292,32 @@ class LandingEnvConfig:
     # Reuse one Basilisk sim across episodes (recommended on Windows).
     reuse_sim: bool = True
 
-    # Live Vizard visualization (for evaluation playback, not training).
-    enable_viz: bool = False
+    # Gravity: Phase-1 constant force vs asteroid-centered point mass.
+    gravity_mode: str = "constant"
+    gravity_mu: float = DEFAULT_MU
+    gravity_mass_ref: float = DEFAULT_SPACECRAFT_MASS_REF
+    asteroid_com_N: Tuple[float, float, float] = DEFAULT_ASTEROID_COM_N
 
-    # Basilisk instrument camera (requires Vizard; body-fixed on the hub).
+    # Action: scalar throttle (Phase-1) or point+throttle GNC (orbital).
+    action_mode: str = "throttle"
+
+    # Elliptical orbit episode starts (requires gravity_mode=central).
+    orbital_reset: bool = False
+    orbit_a_min_m: float = 220.0
+    orbit_a_max_m: float = 300.0
+    orbit_e_min: float = 0.05
+    orbit_e_max: float = 0.25
+    orbit_periapsis_floor_m: float = 175.0
+    orbit_inclination_max_deg: float = 35.0
+    orbit_approach_range_m: float = 80.0
+
+    # Vizard visualization (for evaluation playback, not training).
+    enable_viz: bool = False
+    # auto -> live on Darwin, file on Windows (avoids Windows libzmq epoll abort).
+    viz_mode: str = "auto"
+    viz_save_file: str = ""
+
+    # Basilisk instrument camera (requires live Vizard; body-fixed on the hub).
     enable_camera: bool = False
     camera_width: int = 64
     camera_height: int = 64
@@ -364,6 +363,24 @@ class LandingEnvConfig:
         )
         return self
 
+    def apply_orbital_defaults(self) -> "LandingEnvConfig":
+        """Configure central gravity, elliptical reset, and point+throttle GNC.
+
+        Returns:
+            ``self`` for fluent use.
+        """
+        self.gravity_mode = "central"
+        self.orbital_reset = True
+        self.action_mode = "point_throttle"
+        self.obs_mode = "orbital"
+        self.auto_point = False
+        self.point_every_step = False
+        self.time_limit = max(float(self.time_limit), 300.0)
+        self.escape_radius = max(float(self.escape_radius), 2000.0)
+        self.max_thrust = max(float(self.max_thrust), 400.0)
+        self.reuse_sim = False
+        return self
+
     def target_array(self) -> np.ndarray:
         """Return the surface landing site as a length-3 ``float64`` array.
 
@@ -395,6 +412,7 @@ class SimHandles:
         gravity_actuator: Retained MuJoCo force actuator reference.
         thruster_viz_writer: Optional Vizard thruster writer reference.
         viz: Optional Vizard interface object.
+        viz_bin_path: Path to recorded Vizard ``.bin`` when using save-file mode.
         camera_mod: Optional Basilisk ``camera.Camera`` instrument module.
         absolute_sim_time_sec: Monotonic Basilisk stop-time clock, seconds.
         episode_time_sec: Time elapsed within the current episode, seconds.
@@ -413,6 +431,7 @@ class SimHandles:
     gravity_actuator: Any = None
     thruster_viz_writer: Any = None
     viz: Any = None
+    viz_bin_path: Optional[str] = None
     camera_mod: Any = None
     absolute_sim_time_sec: float = 0.0
     episode_time_sec: float = 0.0
@@ -479,11 +498,18 @@ class AsteroidLandingEnv(gym.Env):
         )
         self._scenic_sigma: Optional[np.ndarray] = None
 
-        self.action_space = spaces.Box(
-            low=np.array([0.0], dtype=np.float32),
-            high=np.array([1.0], dtype=np.float32),
-            dtype=np.float32,
-        )
+        if str(self.config.action_mode).lower() == "point_throttle":
+            self.action_space = spaces.Box(
+                low=np.array([0.0, -1.0, -1.0, -1.0], dtype=np.float32),
+                high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+                dtype=np.float32,
+            )
+        else:
+            self.action_space = spaces.Box(
+                low=np.array([0.0], dtype=np.float32),
+                high=np.array([1.0], dtype=np.float32),
+                dtype=np.float32,
+            )
         dim = observation_dim(self.config.obs_mode)
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -591,12 +617,18 @@ class AsteroidLandingEnv(gym.Env):
         if self.handles is None:
             raise RuntimeError("Environment must be reset before calling step().")
 
-        raw_throttle = float(
-            np.clip(np.asarray(action, dtype=np.float32).reshape(-1)[0], 0.0, 1.0)
-        )
+        action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+        raw_throttle = float(np.clip(action_arr[0], 0.0, 1.0))
+        point_dir = None
+        if str(self.config.action_mode).lower() == "point_throttle":
+            if action_arr.size >= 4:
+                point_dir = action_arr[1:4].astype(np.float64)
+            else:
+                point_dir = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+
         prev_truth = self._get_truth_vector()
         pre_perception = self._build_perception(prev_truth)
-        r_now, _v_now = self._get_latest_state()
+        r_now, v_now = self._get_latest_state()
         self._mission = update_mission(
             self._mission,
             perception=pre_perception,
@@ -613,7 +645,10 @@ class AsteroidLandingEnv(gym.Env):
         )
         thrust_N = float(throttle * self.config.max_thrust)
 
-        if self.config.auto_point and self.config.point_every_step:
+        hub = self.handles.scene.getBody(SPACECRAFT_BODY_NAME)
+        if point_dir is not None:
+            apply_pointing_direction(hub, point_dir)
+        elif self.config.auto_point and self.config.point_every_step:
             self._point_at_target(r_now)
         self._write_throttle(throttle)
         self._advance_sim(self.config.control_dt)
@@ -717,6 +752,7 @@ class AsteroidLandingEnv(gym.Env):
             "perception_source": perception.get("perception_source", "geometry"),
             "mission_mode": self._mission.mode,
             "best_hazard": float(self._mission.best_hazard),
+            "orbit_approach_range_m": float(self.config.orbit_approach_range_m),
         }
 
     def _point_at_target(self, position_N: np.ndarray) -> None:
@@ -791,6 +827,21 @@ class AsteroidLandingEnv(gym.Env):
         rng = self._np_random or np.random.default_rng(self.config.seed)
         target = self.config.target_array()
         self._scenic_sigma = None
+        if self.config.orbital_reset:
+            position, velocity, sigma = sample_elliptical_start(
+                rng,
+                mu=float(self.config.gravity_mu),
+                com_N=self.config.asteroid_com_N,
+                a_min_m=float(self.config.orbit_a_min_m),
+                a_max_m=float(self.config.orbit_a_max_m),
+                e_min=float(self.config.orbit_e_min),
+                e_max=float(self.config.orbit_e_max),
+                periapsis_floor_m=float(self.config.orbit_periapsis_floor_m),
+                inclination_max_deg=float(self.config.orbit_inclination_max_deg),
+                miss_pointing=not self.config.auto_point,
+            )
+            self._scenic_sigma = sigma
+            return position, velocity
         if self.config.scenic_like_randomize:
             position, velocity, sigma = scenic_like_or_default(
                 target, rng, enabled=True
@@ -924,11 +975,21 @@ class AsteroidLandingEnv(gym.Env):
             position_N: Hub inertial position, meters.
 
         Returns:
-            Altitude in meters (flat plane or Itokawa heightmap).
+            Altitude in meters (flat plane, Itokawa heightmap, or radial shell
+            when outside the heightmap during orbital flight).
         """
         p = np.asarray(position_N, dtype=np.float64).reshape(3)
         if self.config.use_flat_surface:
             return float(p[2] - self.config.flat_surface_z)
+        if str(self.config.gravity_mode).lower() == "central" or self.config.orbital_reset:
+            if not self.surface.contains_xy(float(p[0]), float(p[1])):
+                return float(
+                    self.surface.radial_altitude(
+                        p,
+                        com_N=np.asarray(self.config.asteroid_com_N, dtype=np.float64),
+                        site_N=self.config.target_array(),
+                    )
+                )
         return float(self.surface.altitude(p))
 
     def _get_truth_vector(self) -> np.ndarray:
@@ -966,12 +1027,23 @@ class AsteroidLandingEnv(gym.Env):
         """
         if perception is None:
             perception = self._build_perception(truth)
+        orbital = None
+        if validate_obs_mode(self.config.obs_mode) == "orbital":
+            r, v = self._get_latest_state()
+            orbital = pack_orbital_vector(
+                position_N=r,
+                velocity_N=v,
+                target_N=self.config.target_array(),
+                altitude=float(truth[0]),
+                previous_throttle=float(truth[4]),
+            )
         return encode_agent_observation(
             self.config.obs_mode,
             truth,
             perception=perception,
             noise_std=float(self.config.obs_noise_std),
             rng=self._np_random or np.random.default_rng(self.config.seed),
+            orbital=orbital,
         )
 
     def _compute_reward(
@@ -1125,19 +1197,61 @@ def _attach_thruster_visualization(viz, spacecraft_name: str, writer) -> None:
     )
 
 
+def resolve_viz_mode(mode: str) -> str:
+    """Resolve ``auto`` / ``live`` / ``file`` into ``live`` or ``file``.
+
+    On Windows, ``auto`` selects save-file mode because Basilisk's bundled
+    libzmq often aborts liveStream with an epoll assertion (Vizard then times
+    out on ``tcp://localhost:5556``). macOS keeps liveStream as the default.
+    """
+    normalized = (mode or "auto").strip().lower()
+    if normalized == "auto":
+        return "live" if sys.platform == "darwin" else "file"
+    if normalized in ("live", "file"):
+        return normalized
+    raise ValueError(f"Unknown viz_mode {mode!r}; expected auto|live|file")
+
+
+def default_viz_bin_path(policy_tag: str = "play") -> str:
+    """Return an absolute ``.bin`` path under ``outputs/viz/`` for save-file mode."""
+    os.makedirs(os.path.join("outputs", "viz"), exist_ok=True)
+    return os.path.abspath(
+        os.path.join("outputs", "viz", f"{policy_tag}_UnityViz.bin")
+    )
+
+
 def _find_vizard_app() -> Optional[str]:
-    """Locate a Vizard.app bundle on common macOS install paths.
+    """Locate Vizard on common macOS / Windows install paths.
+
+    Checks ``VIZARD_PATH`` / ``BSK_VIZARD_PATH`` first (file or ``.app`` bundle),
+    then platform defaults including the home-PC OneDrive layout.
 
     Returns:
-        Absolute path to ``Vizard.app`` if found, otherwise ``None``.
+        Absolute path to ``Vizard.exe`` / ``Vizard.app`` if found, else ``None``.
     """
+    for env_key in ("VIZARD_PATH", "BSK_VIZARD_PATH"):
+        env_path = os.environ.get(env_key, "").strip()
+        if env_path and (os.path.isfile(env_path) or os.path.isdir(env_path)):
+            return env_path
+
+    home = os.path.expanduser("~")
     candidates = [
+        # Windows executable installs
+        os.path.join(
+            home, "OneDrive", "Documents", "Applications", "Vizard", "Vizard.exe"
+        ),
+        os.path.join(home, "Documents", "Applications", "Vizard", "Vizard.exe"),
+        os.path.join(home, "Desktop", "Vizard", "Vizard.exe"),
+        os.path.join(home, "Downloads", "Vizard", "Vizard.exe"),
+        r"C:\Program Files\Vizard\Vizard.exe",
+        r"C:\Program Files (x86)\Vizard\Vizard.exe",
+        # macOS app bundles
         "/Applications/Vizard.app",
-        os.path.expanduser("~/Applications/Vizard.app"),
+        os.path.join(home, "Applications", "Vizard.app"),
         "/Applications/Vizard/Vizard.app",
     ]
     for path in candidates:
-        if os.path.isdir(path):
+        if os.path.isfile(path) or os.path.isdir(path):
             return path
     return None
 
@@ -1153,6 +1267,8 @@ def _setup_vizard(
     camera_width: int = 64,
     camera_height: int = 64,
     camera_render_rate_sec: float = 0.25,
+    viz_mode: str = "live",
+    viz_save_file: str = "",
 ):
     """Attach Vizard, optional thruster HUD, and optional Basilisk instrument camera.
 
@@ -1161,24 +1277,36 @@ def _setup_vizard(
         scene: MuJoCo scene providing spacecraft / asteroid bodies.
         thrust_msg: Scalar thruster command message mirrored into Vizard.
         max_thrust: Nominal max thrust used for Vizard thruster scaling, Newtons.
-        show_gui: If True, launch Vizard with a visible window (``-directComm``).
+        show_gui: If True and ``viz_mode=live``, launch Vizard with ``-directComm``.
             If False (camera-only), launch headless OpNav mode (``-noDisplay``).
         enable_camera: If True, attach a body-fixed ``camera.Camera`` on the hub
             and register it with ``vizInterface`` for OpNav image requests.
+            Requires ``viz_mode=live``.
         camera_width: Instrument camera width in pixels.
         camera_height: Instrument camera height in pixels.
         camera_render_rate_sec: Image request period in seconds.
+        viz_mode: ``live`` (ZeroMQ) or ``file`` (record ``.bin``).
+        viz_save_file: Destination ``.bin`` path when ``viz_mode=file``.
 
     Returns:
-        Tuple ``(viz, thruster_viz_writer, camera_mod)`` for retention on
-        ``SimHandles``. ``camera_mod`` is ``None`` when ``enable_camera`` is False.
+        Tuple ``(viz, thruster_viz_writer, camera_mod, viz_bin_path)`` for
+        retention on ``SimHandles``. ``camera_mod`` / ``viz_bin_path`` may be
+        ``None``.
 
     Raises:
         RuntimeError: If Basilisk was built without vizInterface support.
+        ValueError: If ``enable_camera`` is requested with ``viz_mode=file``.
     """
     if not vizSupport.vizFound:
         raise RuntimeError(
             "Basilisk vizInterface is unavailable. Install bsk with viz support."
+        )
+
+    mode = resolve_viz_mode(viz_mode)
+    if enable_camera and mode != "live":
+        raise ValueError(
+            "Instrument camera requires viz_mode=live (OpNav needs liveStream). "
+            "On Windows use --viz-live if your libzmq works, or omit --camera."
         )
 
     thruster_viz_writer = ThrusterVizMessageWriter(
@@ -1191,15 +1319,32 @@ def _setup_vizard(
     )
     scSim.AddModelToTask(SIM_TASK_NAME, thruster_viz_writer)
 
-    # liveStream enables 2-way TCP (needed for instrument-camera image requests).
-    viz = vizSupport.enableUnityVisualization(
-        scSim,
-        SIM_TASK_NAME,
-        scene,
-        liveStream=True,
-    )
-    viz.reqPortNumber = "5556"
-    viz.noDisplay = not bool(show_gui)
+    viz_bin_path: Optional[str] = None
+    if mode == "file":
+        viz_bin_path = os.path.abspath(
+            viz_save_file or default_viz_bin_path("asteroid_landing")
+        )
+        os.makedirs(os.path.dirname(viz_bin_path) or ".", exist_ok=True)
+        viz = vizSupport.enableUnityVisualization(
+            scSim,
+            SIM_TASK_NAME,
+            scene,
+            saveFile=viz_bin_path,
+            liveStream=False,
+        )
+        print(f"Vizard save-file mode: recording to {viz_bin_path}")
+        print("Live ZeroMQ is skipped (avoids Windows libzmq epoll abort).")
+    else:
+        # liveStream enables 2-way TCP (needed for instrument-camera image requests).
+        viz = vizSupport.enableUnityVisualization(
+            scSim,
+            SIM_TASK_NAME,
+            scene,
+            liveStream=True,
+        )
+        viz.reqPortNumber = "5556"
+        viz.noDisplay = not bool(show_gui)
+
     _attach_thruster_visualization(viz, SPACECRAFT_BODY_NAME, thruster_viz_writer)
     viz.settings.showSpacecraftAsSprites = -1
     viz.settings.ambient = 0.1
@@ -1234,16 +1379,17 @@ def _setup_vizard(
         camera_mod.imageInMsg.subscribeTo(viz.opnavImageOutMsgs[-1])
         viz.settings.viewCameraViewHUD = 1
 
-    from asteroid_rl.camera import launch_vizard_for_camera
+    if mode == "live":
+        from asteroid_rl.camera import launch_vizard_for_camera
 
-    launch_vizard_for_camera(
-        port=str(viz.reqPortNumber),
-        show_gui=show_gui,
-        find_app_fn=_find_vizard_app,
-        sleep_fn=time.sleep,
-        popen_fn=subprocess.Popen,
-    )
-    return viz, thruster_viz_writer, camera_mod
+        launch_vizard_for_camera(
+            port=str(viz.reqPortNumber),
+            show_gui=show_gui,
+            find_app_fn=_find_vizard_app,
+            sleep_fn=time.sleep,
+            popen_fn=subprocess.Popen,
+        )
+    return viz, thruster_viz_writer, camera_mod, viz_bin_path
 
 
 def build_sim(
@@ -1300,7 +1446,14 @@ def build_sim(
     integ.setAbsoluteTolerance(1e-3)
     scene.setIntegrator(integ)
 
-    gravity = ConstantGravity(force_N=[0.0, 0.0, -200.0])
+    if str(getattr(config, "gravity_mode", "constant")).lower() == "central":
+        gravity = CentralGravity(
+            mu=float(config.gravity_mu),
+            mass=float(config.gravity_mass_ref),
+            com_N=config.asteroid_com_N,
+        )
+    else:
+        gravity = ConstantGravity(force_N=[0.0, 0.0, -200.0])
     scene.AddModelToDynamicsTask(gravity)
 
     gravityApplicationSite = scene.getBody(SPACECRAFT_BODY_NAME).getOrigin()
@@ -1321,9 +1474,15 @@ def build_sim(
     viz = None
     thruster_viz_writer = None
     camera_mod = None
+    viz_bin_path = None
     need_viz = bool(config.enable_viz or config.enable_camera)
     if need_viz:
-        viz, thruster_viz_writer, camera_mod = _setup_vizard(
+        mode = resolve_viz_mode(config.viz_mode)
+        # Camera OpNav requires liveStream; force live when camera is requested.
+        if config.enable_camera:
+            mode = "live"
+        save_path = config.viz_save_file or default_viz_bin_path("asteroid_landing")
+        viz, thruster_viz_writer, camera_mod, viz_bin_path = _setup_vizard(
             scSim,
             scene,
             thrust_msg,
@@ -1333,6 +1492,8 @@ def build_sim(
             camera_width=int(config.camera_width),
             camera_height=int(config.camera_height),
             camera_render_rate_sec=float(config.control_dt),
+            viz_mode=mode,
+            viz_save_file=save_path,
         )
 
     scSim.InitializeSimulation()
@@ -1355,6 +1516,7 @@ def build_sim(
         gravity_actuator=gravityActuator,
         thruster_viz_writer=thruster_viz_writer,
         viz=viz,
+        viz_bin_path=viz_bin_path,
         camera_mod=camera_mod,
         absolute_sim_time_sec=SIM_DT,
         episode_time_sec=SIM_DT,

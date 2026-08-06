@@ -92,7 +92,7 @@ def run_episode(
     action_fn: Callable[[Any], np.ndarray],
     env,
     csv_path: str,
-    max_steps: int = 1000,
+    max_steps: int = 2000,
     *,
     print_every: Optional[int] = None,
     step_sleep_sec: float = 0.0,

@@ -23,25 +23,24 @@ Before coding on this repo:
 
 ## Current state (edit in place)
 
-- **Repo role:** Phase-1 fixed-site asteroid landing RL on Basilisk + MuJoCo + Gymnasium + SB3 PPO. Planning-doc stack largely scaffolded (VLM/Scenic-like/mission).
+- **Repo role:** Phase-1 fixed-site landing **plus** Phase-2 orbital GNC slice (central gravity + elliptical reset + point/throttle).
 - **Package root:** `asteroid_rl/` at repo root (not `src/`).
-- **Success metric:** Surface altitude / speed / lateral (Itokawa heightmap or optional flat plane).
-- **PPO gate (truth):** **Met on M2** via BC warm-start + flat→mesh curriculum. `outputs/ppo_asteroid_fixed_site_v2.zip` gets **`safe_landing` on flat and mesh**.
-- **Sensors obs:** `outputs/ppo_sensors_curriculum.zip` also lands on mesh.
-- **Perception obs:** scaffolding + short train exist; PPO not yet reliably landing (needs longer home-PC train / better BC).
-- **VLM:** [`vlm.py`](asteroid_rl/vlm.py) Qwen backend with geometry fallback (`--perception auto|vlm`); needs optional `transformers` + weights.
-- **Mission search:** [`mission.py`](asteroid_rl/mission.py) hazard commit (~0.10); `--mission-search`.
-- **Scenic-like:** [`scenic_reset.py`](asteroid_rl/scenic_reset.py) PDF-style random starts; `--scenic-like` (no Scenic package).
-- **Hardware:** M2 short curriculum; home PC for long PPO + VLM GPU.
+- **Success metric:** Surface altitude / speed / lateral (Itokawa heightmap or radial shell off-map; optional flat plane).
+- **PPO gate (truth, Phase-1):** Met on M2; use `outputs/best_model_truth_mesh_fixed/best_model.zip` for reliable landings (not the hover-prone `v2` final zip).
+- **Orbital GNC:** `--orbital` / `train_orbital_ppo`; BC + 20k PPO smoke run saved `outputs/ppo_orbital_final.zip` and `outputs/best_model_orbital/best_model.zip` (not yet reliably `safe_landing` — needs longer home-PC train).
+- **Sensors/perception/VLM/mission/scenic-like:** unchanged scaffolding from prior sessions.
+- **Vizard:** macOS liveStream; Windows save-file default.
+- **Hardware:** M2 short runs; home PC for long orbital PPO + VLM GPU.
 
 ---
 
 ## Open threads (edit in place)
 
-- [ ] Longer home-PC curriculum (`--timesteps-flat/mesh 1e5+`) especially `--obs-mode perception`.
-- [ ] Install transformers + Qwen weights; run `--perception vlm --camera` for real image→JSON.
-- [ ] Improve scenic-like + miss-pointing so search/re-acquire works (scripted crashed in one smoke).
-- [ ] Optional real Scenic package later (sampler API already matches intent).
+- [ ] Longer orbital PPO (`--timesteps 1e5+`) until `safe_landing` from ellipse is routine; keep EvalCallback best zip.
+- [ ] Improve `scripted_orbit` deorbit→pad transfer for better BC demos.
+- [ ] Longer home-PC curriculum especially `--obs-mode perception`.
+- [ ] Install transformers + Qwen weights; run `--perception vlm --camera`.
+- [ ] Optional real Scenic package later.
 - [ ] Full `bsk_rl` still optional.
 
 ---
@@ -174,6 +173,27 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
   - `bsk_rl_api`, `train_curriculum`, `plot_logs` CLIs (entrypoints / intentional stubs).
   - Stale `WORK_SUMMARY.md` (historical; superseded by README + this diary — not deleted).
   - Phantom `src/` in some IDE indexes — **not on disk / not in git**.
+
+---
+
+### 2026-08-05 — Windows Vizard save-file fallback
+
+- **Prompt / goal:** Fix Vizard timeout / epoll crash on Windows liveStream.
+- **Root cause:** Basilisk bundled libzmq aborts (`epoll.cpp:73`); Vizard then times out on `tcp://localhost:5556`. Mac liveStream still fine. `saveFile` mode works on this PC.
+- **Changes:** `--viz` → `auto` (file on Windows, live on Darwin); `--viz-live` / `--viz-file`; after episode open `.bin` via `-loadFile`.
+- **Files:** `asteroid_rl/env.py`, `asteroid_rl/camera.py`, `asteroid_rl/cli/play.py`, `WORK_DIARY.md`.
+- **Next:** User run `python -m asteroid_rl.cli.play --policy scripted --viz`.
+
+---
+
+### 2026-08-05 — Elliptical-orbit GNC slice
+
+- **Prompt / goal:** Elliptical start + pointing/GNC training per plan.
+- **Changes:** `CentralGravity`; `orbit_reset.py`; `action_mode=point_throttle` (4-D); `obs_mode=orbital`; radial altitude off heightmap; `scripted_orbit`; `play --orbital`; `train_orbital_ppo` with BC.
+- **Files:** `asteroid_rl/gravity.py`, `orbit_reset.py`, `env.py`, `surface.py`, `observations.py`, `pointing.py`, `policies.py`, `imitate.py`, `cli/play.py`, `cli/train_orbital_ppo.py`, README, WORK_DIARY.
+- **Runs:** BC mse≈0.004; PPO 20k steps → `outputs/ppo_orbital_final.zip` + `outputs/best_model_orbital/best_model.zip`. Scripted/PPO not yet reliable `safe_landing` from ellipse (needs longer train).
+- **Gotchas:** Heightmap altitude sentinel off-map → use radial shell; Phase-1 defaults unchanged.
+- **Next:** Longer `--timesteps 1e5+` on home PC; improve scripted deorbit→pad.
 
 ---
 

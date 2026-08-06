@@ -7,20 +7,27 @@ Examples:
     python -m asteroid_rl.cli.play --policy scripted
     python -m asteroid_rl.cli.play --policy random
     python -m asteroid_rl.cli.play --policy ppo --model outputs/ppo_asteroid_fixed_site_v2.zip
-    python -m asteroid_rl.cli.play --policy scripted --viz
-    python -m asteroid_rl.cli.play --policy scripted --camera --save-frame outputs/plots/navcam.png
-    # --camera uses Basilisk's body-fixed instrument camera via Vizard (OpNav path)
+    python -m asteroid_rl.cli.play --policy scripted_orbit --orbital
+    python -m asteroid_rl.cli.play --policy ppo --orbital --model outputs/best_model_orbital/best_model.zip --viz
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 from argparse import Namespace
 
 from stable_baselines3 import PPO
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.camera import launch_vizard_load_file
+from asteroid_rl.env import (
+    AsteroidLandingEnv,
+    LandingEnvConfig,
+    _find_vizard_app,
+    default_viz_bin_path,
+    resolve_viz_mode,
+)
 from asteroid_rl.episode import ensure_dirs, run_episode
 from asteroid_rl.policies import make_action_fn
 
@@ -37,7 +44,7 @@ def parse_args() -> Namespace:
     )
     parser.add_argument(
         "--policy",
-        choices=("scripted", "random", "ppo"),
+        choices=("scripted", "scripted_orbit", "random", "random_orbit", "ppo"),
         default="scripted",
     )
     parser.add_argument(
@@ -48,14 +55,35 @@ def parse_args() -> Namespace:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--orbital",
+        action="store_true",
+        help=(
+            "Elliptical-orbit start: central gravity + point/throttle GNC "
+            "(overrides obs/action modes)"
+        ),
+    )
+    parser.add_argument(
         "--viz",
         action="store_true",
-        help="Live-stream to Vizard (also enables the hub instrument camera HUD)",
+        help=(
+            "Visualize in Vizard. On Windows defaults to save-file playback "
+            "(live ZeroMQ often crashes); on macOS uses liveStream."
+        ),
+    )
+    parser.add_argument(
+        "--viz-live",
+        action="store_true",
+        help="Force ZeroMQ liveStream (needed for --camera HUD; fragile on Windows)",
+    )
+    parser.add_argument(
+        "--viz-file",
+        action="store_true",
+        help="Force save-file Vizard mode (write .bin, open after episode)",
     )
     parser.add_argument(
         "--camera",
         action="store_true",
-        help="Enable Basilisk hub camera (implied by --viz; use alone for headless OpNav)",
+        help="Enable Basilisk hub camera (implies liveStream / --viz-live)",
     )
     parser.add_argument(
         "--save-frame",
@@ -94,7 +122,7 @@ def parse_args() -> Namespace:
     parser.add_argument(
         "--obs-mode",
         type=str,
-        choices=("truth", "sensors", "perception"),
+        choices=("truth", "sensors", "perception", "orbital"),
         default="truth",
         help="Policy observation mode (reward still uses simulator truth)",
     )
@@ -121,10 +149,9 @@ def parse_args() -> Namespace:
 def main() -> None:
     """Load a policy, run one episode, and write a CSV log.
 
-    When ``--viz`` is set, enables Basilisk liveStream, launches Vizard, and
-    always attaches the hub instrument camera (camera HUD).
-    ``--camera`` alone enables the same camera in headless OpNav mode.
-    When ``--policy ppo`` is set, loads ``--model`` from disk first.
+    ``--viz`` uses liveStream on macOS and save-file playback on Windows by
+    default (Windows Basilisk libzmq often aborts live TCP). ``--viz-live`` /
+    ``--camera`` force liveStream. ``--viz-file`` forces ``.bin`` recording.
     """
     args = parse_args()
     ensure_dirs()
@@ -138,11 +165,34 @@ def main() -> None:
             )
         model = PPO.load(args.model, device="cpu")
 
-    action_fn = make_action_fn(args.policy, model=model, seed=args.seed)
-    # --viz always includes the Basilisk instrument camera.
-    use_camera = bool(args.camera or args.viz)
-    use_viz = bool(args.viz)
-    # Camera/Vizard need a live connection; do not reuse the sim across episodes.
+    use_viz = bool(args.viz or args.viz_live or args.viz_file)
+    use_camera = bool(args.camera)
+    if args.viz_live and args.viz_file:
+        raise SystemExit("Choose only one of --viz-live / --viz-file")
+    if use_camera:
+        viz_mode = "live"
+    elif args.viz_live:
+        viz_mode = "live"
+    elif args.viz_file:
+        viz_mode = "file"
+    elif args.viz:
+        viz_mode = "auto"
+    else:
+        viz_mode = "auto"
+    resolved_mode = resolve_viz_mode(viz_mode)
+    # --viz alone used to always enable the camera HUD; keep that for live only.
+    if args.viz and resolved_mode == "live" and not args.viz_file:
+        use_camera = True
+
+    viz_bin = default_viz_bin_path(f"play_{args.policy}")
+    policy = args.policy
+    if args.orbital and policy == "scripted":
+        policy = "scripted_orbit"
+    if args.orbital and policy == "random":
+        policy = "random_orbit"
+
+    action_fn = make_action_fn(policy, model=model, seed=args.seed)
+
     config = LandingEnvConfig(
         seed=args.seed,
         randomize_reset=False,
@@ -151,6 +201,8 @@ def main() -> None:
         reuse_sim=not (use_viz or use_camera),
         enable_viz=use_viz,
         enable_camera=use_camera,
+        viz_mode=resolved_mode,
+        viz_save_file=viz_bin,
         use_flat_surface=bool(args.flat_surface),
         obs_noise_std=float(args.obs_noise),
         obs_mode=str(args.obs_mode),
@@ -158,20 +210,30 @@ def main() -> None:
         enable_mission_search=bool(args.mission_search),
         scenic_like_randomize=bool(args.scenic_like),
     )
+    if args.orbital:
+        config.apply_orbital_defaults()
     env = AsteroidLandingEnv(config=config)
 
-    prefix = "viz" if args.viz else "play"
-    csv_path = args.csv or f"logs/{prefix}_{args.policy}_episode.csv"
+    prefix = "viz" if use_viz else "play"
+    csv_path = args.csv or f"logs/{prefix}_{policy}_episode.csv"
+
+    if args.orbital:
+        print(
+            f"Orbital mode: central gravity + elliptical reset + "
+            f"action_mode={config.action_mode} obs_mode={config.obs_mode}"
+        )
 
     if use_viz or use_camera:
-        print(f"Starting '{args.policy}' episode with Vizard...")
-        print("Vizard should open and connect to tcp://localhost:5556")
-        if use_camera:
-            print("Hub instrument camera enabled (look for Camera View HUD in Vizard).")
-        if use_camera and not use_viz:
-            print("Camera-only mode uses Vizard -noDisplay (OpNav image path).")
-        if use_viz:
-            print("If it waits forever: Direct Communication + Live Streaming in Vizard.")
+        print(f"Starting '{args.policy}' episode with Vizard ({resolved_mode})...")
+        if resolved_mode == "live":
+            print("Vizard should open and connect to tcp://localhost:5556")
+            print("If it times out: Basilisk liveStream may have crashed (common on Windows).")
+            print("Retry with plain --viz (save-file mode) instead of --viz-live.")
+            if use_camera:
+                print("Hub instrument camera enabled (look for Camera View HUD in Vizard).")
+        else:
+            print(f"Recording Vizard playback file: {viz_bin}")
+            print("Vizard will open after the episode finishes (--loadFile).")
 
     if use_camera and args.save_frame:
         import numpy as np
@@ -197,11 +259,11 @@ def main() -> None:
         print(f"Saved Basilisk instrument-camera frame to {args.save_frame}")
 
     summary = run_episode(
-        args.policy,
+        policy,
         action_fn,
         env,
         csv_path,
-        print_every=10 if (use_viz or use_camera) else 1,
+        print_every=10 if (use_viz or use_camera or args.orbital) else 1,
         step_sleep_sec=config.control_dt * args.realtime_scale,
     )
     print(
@@ -211,7 +273,36 @@ def main() -> None:
         f"speed={summary.get('final_speed')})"
     )
     print(f"Saved {csv_path}")
+
+    recorded = None
+    if env.handles is not None:
+        recorded = env.handles.viz_bin_path
     env.close()
+
+    if resolved_mode == "file" and use_viz:
+        bin_path = recorded or viz_bin
+        # Basilisk may nest under _VizFiles when given a non-.bin stem; prefer
+        # the path we requested (explicit .bin) or the handle path.
+        if not os.path.isfile(bin_path):
+            alt = os.path.join(
+                os.path.dirname(bin_path),
+                "_VizFiles",
+                os.path.basename(bin_path),
+            )
+            if os.path.isfile(alt):
+                bin_path = alt
+        if os.path.isfile(bin_path):
+            launch_vizard_load_file(
+                bin_path,
+                find_app_fn=_find_vizard_app,
+                popen_fn=subprocess.Popen,
+            )
+            print(
+                "If Vizard did not open, use the start screen:\n"
+                f"  Basilisk Message File -> Select -> {bin_path}"
+            )
+        else:
+            print(f"Expected Vizard bin missing: {bin_path}")
 
 
 if __name__ == "__main__":

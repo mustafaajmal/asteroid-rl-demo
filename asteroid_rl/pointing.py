@@ -119,6 +119,28 @@ def mrp_point_boresight_at(
     return float(sigma[0]), float(sigma[1]), float(sigma[2])
 
 
+def mrp_point_boresight_along(
+    direction_N: Sequence[float],
+    boresight_B: Sequence[float] = DEFAULT_BORESIGHT_B,
+) -> Tuple[float, float, float]:
+    """Compute body MRP so ``boresight_B`` aligns with inertial ``direction_N``.
+
+    Args:
+        direction_N: Desired inertial pointing direction (need not be unit).
+        boresight_B: Body-frame axis to align (default camera / approach -z).
+
+    Returns:
+        Length-3 MRP tuple ``sigma_BN``.
+    """
+    los_N = unit(np.asarray(direction_N, dtype=np.float64).reshape(3))
+    r_body_to_inertial = dcm_align_a_to_b(
+        np.asarray(boresight_B, dtype=np.float64), los_N
+    )
+    c_bn = r_body_to_inertial.T
+    sigma = np.asarray(rbk.C2MRP(c_bn), dtype=np.float64).reshape(3)
+    return float(sigma[0]), float(sigma[1]), float(sigma[2])
+
+
 def apply_pointing(hub, position_N: Sequence[float], target_N: Sequence[float]) -> None:
     """Set hub attitude to point the default boresight at ``target_N``.
 
@@ -130,6 +152,21 @@ def apply_pointing(hub, position_N: Sequence[float], target_N: Sequence[float]) 
     if not hasattr(hub, "setAttitude"):
         return
     sigma = mrp_point_boresight_at(position_N, target_N)
+    hub.setAttitude(list(sigma))
+    if hasattr(hub, "setAttitudeRate"):
+        hub.setAttitudeRate([0.0, 0.0, 0.0])
+
+
+def apply_pointing_direction(hub, direction_N: Sequence[float]) -> None:
+    """Set hub attitude so the default boresight follows ``direction_N``.
+
+    Args:
+        hub: MuJoCo body handle exposing ``setAttitude``.
+        direction_N: Inertial direction for body -z (approach / camera axis).
+    """
+    if not hasattr(hub, "setAttitude"):
+        return
+    sigma = mrp_point_boresight_along(direction_N)
     hub.setAttitude(list(sigma))
     if hasattr(hub, "setAttitudeRate"):
         hub.setAttitudeRate([0.0, 0.0, 0.0])

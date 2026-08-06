@@ -87,6 +87,20 @@ python -m asteroid_rl.cli.plot_comparison
 python -m asteroid_rl.cli.diagnose logs/eval_ppo_episode_0.csv
 ```
 
+## Orbital GNC mode (Phase-2 slice)
+
+Elliptical starts about the asteroid COM with **central gravity**, **point + throttle**
+actions, and a scripted GNC baseline:
+
+```bash
+python -m asteroid_rl.cli.play --policy scripted_orbit --orbital
+python -m asteroid_rl.cli.play --policy scripted_orbit --orbital --viz
+python -m asteroid_rl.cli.train_orbital_ppo --timesteps 20000 --bc-episodes 3 --device cpu
+python -m asteroid_rl.cli.play --policy ppo --orbital --model outputs/best_model_orbital/best_model.zip --viz
+```
+
+Phase-1 fixed-approach demos are unchanged (default constant gravity + 1-D throttle).
+
 ## Observation modes (policy vs truth)
 
 | `--obs-mode` | Policy sees | Notes |
@@ -94,6 +108,7 @@ python -m asteroid_rl.cli.diagnose logs/eval_ppo_episode_0.csv
 | `truth` (default) | altitude, vz, **site distance**, speed, throttle | Privileged scaffolding |
 | `sensors` | altimeter, vz, speed, closing-rate, throttle | No site distance / pose |
 | `perception` | visibility, site uv, hazard, inv-depth, throttle | Camera-stub / VLM schema path |
+| `orbital` | rel site xyz, vel xyz, altitude, speed, throttle | Used with `--orbital` / point+throttle |
 
 **Reward and success/crash checks always use clean simulator truth.** That is
 standard privileged learning for the plant; it is not what the policy is
