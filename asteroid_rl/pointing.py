@@ -170,3 +170,72 @@ def apply_pointing_direction(hub, direction_N: Sequence[float]) -> None:
     hub.setAttitude(list(sigma))
     if hasattr(hub, "setAttitudeRate"):
         hub.setAttitudeRate([0.0, 0.0, 0.0])
+
+
+def local_up_N(
+    position_N: Sequence[float],
+    com_N: Sequence[float] = (0.0, 0.0, -150.0),
+) -> np.ndarray:
+    """Inertial \"away from asteroid\" direction (local vertical / sky).
+
+    Gravity pulls toward the COM; soft-landing thrust must fire *along*
+    ``local_up`` (away from the surface). Body **+z** is the thruster, body
+    **−z** is the camera/boresight — so for an upright brake, point boresight
+    along ``-local_up`` (look at the ground) so thrust = ``+local_up``.
+
+    Args:
+        position_N: Hub inertial position, meters.
+        com_N: Asteroid center of mass, meters.
+
+    Returns:
+        Shape ``(3,)`` unit vector pointing from COM through the craft (up).
+    """
+    pos = np.asarray(position_N, dtype=np.float64).reshape(3)
+    com = np.asarray(com_N, dtype=np.float64).reshape(3)
+    return unit(pos - com)
+
+
+def thruster_up_tilt_deg(
+    sigma_BN: Sequence[float],
+    up_N: Sequence[float],
+) -> float:
+    """Angle between body **+z** thruster and local-up (0 = upright brake).
+
+    Args:
+        sigma_BN: Current body MRP.
+        up_N: Local-up inertial direction (away from COM).
+
+    Returns:
+        Tilt in degrees. Soft-land wants this small while thrusting.
+    """
+    c_bn = np.asarray(rbk.MRP2C(list(sigma_BN)), dtype=np.float64)
+    # v_B = C_BN v_N  ⇒  body +z in N is C_BN.T @ [0,0,1]
+    thrust_N = c_bn.T @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    up = unit(np.asarray(up_N, dtype=np.float64))
+    c = float(np.clip(np.dot(unit(thrust_N), up), -1.0, 1.0))
+    return float(np.degrees(np.arccos(c)))
+
+
+def boresight_tilt_deg(
+    sigma_BN: Sequence[float],
+    up_N: Sequence[float],
+    boresight_B: Sequence[float] = DEFAULT_BORESIGHT_B,
+) -> float:
+    """Angle in degrees between body boresight and an inertial direction.
+
+    Prefer ``thruster_up_tilt_deg`` for upright soft-land gating (thruster vs
+    local-up). This helper remains for camera / acquire checks.
+
+    Args:
+        sigma_BN: Current body MRP.
+        up_N: Desired inertial direction for the boresight.
+        boresight_B: Body-frame boresight axis (default −z).
+
+    Returns:
+        Tilt angle in degrees (0 = aligned).
+    """
+    c_bn = np.asarray(rbk.MRP2C(list(sigma_BN)), dtype=np.float64)
+    bore_N = c_bn.T @ unit(np.asarray(boresight_B, dtype=np.float64))
+    up = unit(np.asarray(up_N, dtype=np.float64))
+    c = float(np.clip(np.dot(bore_N, up), -1.0, 1.0))
+    return float(np.degrees(np.arccos(c)))

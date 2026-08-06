@@ -44,7 +44,14 @@ def parse_args() -> Namespace:
     )
     parser.add_argument(
         "--policy",
-        choices=("scripted", "scripted_orbit", "random", "random_orbit", "ppo"),
+        choices=(
+            "scripted",
+            "scripted_orbit",
+            "scripted_autonomous",
+            "random",
+            "random_orbit",
+            "ppo",
+        ),
         default="scripted",
     )
     parser.add_argument(
@@ -60,6 +67,14 @@ def parse_args() -> Namespace:
         help=(
             "Elliptical-orbit start: central gravity + point/throttle GNC "
             "(overrides obs/action modes)"
+        ),
+    )
+    parser.add_argument(
+        "--autonomous",
+        action="store_true",
+        help=(
+            "Full planning-doc stack: scenic∪orbit starts, mission FSM "
+            "(search/acquire/divert/upright), upright success gate"
         ),
     )
     parser.add_argument(
@@ -186,9 +201,13 @@ def main() -> None:
 
     viz_bin = default_viz_bin_path(f"play_{args.policy}")
     policy = args.policy
+    if args.autonomous and policy == "scripted":
+        policy = "scripted_autonomous"
     if args.orbital and policy == "scripted":
         policy = "scripted_orbit"
     if args.orbital and policy == "random":
+        policy = "random_orbit"
+    if args.autonomous and policy == "random":
         policy = "random_orbit"
 
     action_fn = make_action_fn(policy, model=model, seed=args.seed)
@@ -207,17 +226,27 @@ def main() -> None:
         obs_noise_std=float(args.obs_noise),
         obs_mode=str(args.obs_mode),
         perception_backend=str(args.perception),
-        enable_mission_search=bool(args.mission_search),
+        enable_mission_search=bool(args.mission_search or args.autonomous),
         scenic_like_randomize=bool(args.scenic_like),
     )
-    if args.orbital:
+    if args.autonomous:
+        config.apply_autonomous_defaults()
+        if args.perception:
+            config.perception_backend = str(args.perception)
+    elif args.orbital:
         config.apply_orbital_defaults()
     env = AsteroidLandingEnv(config=config)
 
     prefix = "viz" if use_viz else "play"
     csv_path = args.csv or f"logs/{prefix}_{policy}_episode.csv"
 
-    if args.orbital:
+    if args.autonomous:
+        print(
+            f"Autonomous mode: mission FSM + upright gate + "
+            f"action_mode={config.action_mode} obs_mode={config.obs_mode} "
+            f"start={config.orbit_start_mode}"
+        )
+    elif args.orbital:
         print(
             f"Orbital mode: central gravity + elliptical reset + "
             f"action_mode={config.action_mode} obs_mode={config.obs_mode}"

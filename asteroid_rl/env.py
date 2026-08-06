@@ -40,8 +40,15 @@ from asteroid_rl.gravity import (
     DEFAULT_SPACECRAFT_MASS_REF,
     CentralGravity,
     ConstantGravity,
+    hover_throttle_central,
 )
-from asteroid_rl.mission import MissionConfig, MissionState, mission_throttle_gate, update_mission
+from asteroid_rl.mission import (
+    MissionConfig,
+    MissionState,
+    mission_pointing_command,
+    mission_throttle_gate,
+    update_mission,
+)
 from asteroid_rl.observations import (
     encode_agent_observation,
     observation_dim,
@@ -49,8 +56,14 @@ from asteroid_rl.observations import (
     pack_truth_vector,
     validate_obs_mode,
 )
-from asteroid_rl.orbit_reset import sample_elliptical_start
-from asteroid_rl.pointing import apply_pointing, apply_pointing_direction
+from asteroid_rl.orbit_reset import orbital_or_default
+from asteroid_rl.pointing import (
+    apply_pointing,
+    apply_pointing_direction,
+    local_up_N,
+    mrp_point_boresight_at,
+    thruster_up_tilt_deg,
+)
 from asteroid_rl.scenic_reset import scenic_like_or_default
 from asteroid_rl.surface import default_landing_site, get_surface_map
 from asteroid_rl.vlm import DEFAULT_VLM_MODEL, PerceptionBackend
@@ -310,6 +323,14 @@ class LandingEnvConfig:
     orbit_periapsis_floor_m: float = 175.0
     orbit_inclination_max_deg: float = 35.0
     orbit_approach_range_m: float = 80.0
+    # ellipse | approach | mixed — mixed teaches divert then hardens to ellipses.
+    orbit_start_mode: str = "ellipse"
+    orbit_approach_prob: float = 0.55
+    # Extra progress credit for closing site range (orbital training only).
+    orbital_range_progress_weight: float = 0.0
+    orbital_lateral_progress_weight: float = 0.0
+    # Reject orbital ICs closer than this altitude above the surface/pad.
+    orbit_min_clearance_m: float = 40.0
 
     # Vizard visualization (for evaluation playback, not training).
     enable_viz: bool = False
@@ -336,6 +357,11 @@ class LandingEnvConfig:
     # Planning-doc hazard gate: search until hazard <= threshold then land.
     enable_mission_search: bool = False
     hazard_commit_threshold: float = 0.10
+    # Upright soft-land gate (default off so Phase-1 semantics stay unchanged).
+    require_upright: bool = False
+    success_tilt_deg: float = 25.0
+    upright_altitude_m: float = 70.0
+    upright_lateral_m: float = 35.0
 
     randomize_initial_distance: bool = False
     initial_distance_delta: float = 0.0
@@ -366,6 +392,10 @@ class LandingEnvConfig:
     def apply_orbital_defaults(self) -> "LandingEnvConfig":
         """Configure central gravity, elliptical reset, and point+throttle GNC.
 
+        Uses mixed approach/ellipse starts on a **flat pad** (planning-doc
+        benchmark order: flat before mesh) so divert→land is learnable before
+        heightmap contact explosions from bad ellipse ICs.
+
         Returns:
             ``self`` for fluent use.
         """
@@ -377,8 +407,52 @@ class LandingEnvConfig:
         self.point_every_step = False
         self.time_limit = max(float(self.time_limit), 300.0)
         self.escape_radius = max(float(self.escape_radius), 2000.0)
-        self.max_thrust = max(float(self.max_thrust), 400.0)
+        # Near the pad, µ/r^2 * m ≈ 1.5–2 kN; 400 N cannot hover/soft-settle.
+        self.max_thrust = max(float(self.max_thrust), 2500.0)
         self.reuse_sim = False
+        # Planning doc: flat surface benchmark before mesh.
+        self.use_flat_surface = True
+        self.flat_surface_z = -30.0
+        self.orbit_start_mode = "mixed"
+        self.orbit_approach_prob = 0.75
+        # Safer ellipses: keep clear of the body / flat pad.
+        self.orbit_a_min_m = 220.0
+        self.orbit_a_max_m = 300.0
+        self.orbit_periapsis_floor_m = 200.0
+        self.orbit_min_clearance_m = 40.0
+        self.orbital_range_progress_weight = 1.5
+        self.orbital_lateral_progress_weight = 1.0
+        self.progress_weight = max(float(self.progress_weight), 2.5)
+        self.success_bonus = max(float(self.success_bonus), 300.0)
+        self.escape_penalty = max(float(self.escape_penalty), 150.0)
+        return self
+
+    def apply_autonomous_defaults(self) -> "LandingEnvConfig":
+        """Full planning-doc stack: orbit/scenic starts + mission FSM + upright.
+
+        Builds on orbital defaults, enables hazard search/acquire, requires
+        upright tilt for ``safe_landing``, and mixes scenic-like miss-pointing
+        starts via ``orbit_start_mode=autonomous``.
+
+        Returns:
+            ``self`` for fluent use.
+        """
+        self.apply_orbital_defaults()
+        self.orbit_start_mode = "autonomous"
+        self.orbit_approach_prob = 0.45
+        self.enable_mission_search = True
+        self.hazard_commit_threshold = 0.10
+        self.require_upright = True
+        self.success_tilt_deg = 35.0
+        self.upright_altitude_m = 120.0
+        self.upright_lateral_m = 50.0
+        self.success_lateral = 25.0  # slightly wider while learning upright
+        self.success_speed = 0.85  # brief curriculum; still soft vs crash_speed
+        self.orbit_approach_prob = 0.90
+        self.orbit_start_mode = "approach"  # settle-first curriculum
+        self.perception_backend = "geometry"
+        self.point_every_step = False
+        self.time_limit = max(float(self.time_limit), 360.0)
         return self
 
     def target_array(self) -> np.ndarray:
@@ -495,6 +569,9 @@ class AsteroidLandingEnv(gym.Env):
         self._mission_cfg = MissionConfig(
             enabled=bool(self.config.enable_mission_search),
             hazard_commit_threshold=float(self.config.hazard_commit_threshold),
+            upright_altitude_m=float(self.config.upright_altitude_m),
+            upright_lateral_m=float(self.config.upright_lateral_m),
+            asteroid_com_N=tuple(float(x) for x in self.config.asteroid_com_N),
         )
         self._scenic_sigma: Optional[np.ndarray] = None
 
@@ -572,6 +649,32 @@ class AsteroidLandingEnv(gym.Env):
 
         truth = self._get_truth_vector()
         info = self._base_info(truth, throttle=0.0, thrust_N=0.0, reason=None)
+        # Seed lateral baseline for orbital reward shaping.
+        target = self.config.target_array()
+        r0, _v0 = self._get_latest_state()
+        self._prev_lateral_for_reward = float(
+            np.linalg.norm(np.asarray(r0[:2]) - target[:2])
+        )
+        # Bootstrap mission mode from IC (near-pad approaches commit divert).
+        if self._mission_cfg.enabled:
+            pre_perc = info.get("perception") or self._build_perception(truth)
+            self._mission = update_mission(
+                self._mission,
+                perception=pre_perc,
+                position_N=r0,
+                target_N=target,
+                altitude_m=float(truth[0]),
+                config=self._mission_cfg,
+                lateral_m=self._prev_lateral_for_reward,
+            )
+            info["mission_mode"] = self._mission.mode
+            info["pointing_command"] = mission_pointing_command(
+                self._mission,
+                position_N=r0,
+                target_N=target,
+                config=self._mission_cfg,
+            ).astype(np.float32)
+            info["tilt_deg"] = float(self._current_tilt_deg())
         obs = self._get_agent_obs(truth, perception=info.get("perception"))
         info.update(
             {
@@ -629,13 +732,16 @@ class AsteroidLandingEnv(gym.Env):
         prev_truth = self._get_truth_vector()
         pre_perception = self._build_perception(prev_truth)
         r_now, v_now = self._get_latest_state()
+        target_now = self.config.target_array()
+        lateral_now = float(np.linalg.norm(r_now[:2] - target_now[:2]))
         self._mission = update_mission(
             self._mission,
             perception=pre_perception,
             position_N=r_now,
-            target_N=self.config.target_array(),
+            target_N=target_now,
             altitude_m=float(prev_truth[0]),
             config=self._mission_cfg,
+            lateral_m=lateral_now,
         )
         throttle, mission_reason = mission_throttle_gate(
             raw_throttle,
@@ -644,10 +750,22 @@ class AsteroidLandingEnv(gym.Env):
             config=self._mission_cfg,
         )
         thrust_N = float(throttle * self.config.max_thrust)
+        pointing_cmd = mission_pointing_command(
+            self._mission,
+            position_N=r_now,
+            target_N=target_now,
+            config=self._mission_cfg,
+        )
 
         hub = self.handles.scene.getBody(SPACECRAFT_BODY_NAME)
         if point_dir is not None:
             apply_pointing_direction(hub, point_dir)
+        elif self.config.enable_mission_search and self._mission.mode in (
+            "acquire",
+            "upright",
+            "search",
+        ):
+            apply_pointing_direction(hub, pointing_cmd)
         elif self.config.auto_point and self.config.point_every_step:
             self._point_at_target(r_now)
         self._write_throttle(throttle)
@@ -683,6 +801,8 @@ class AsteroidLandingEnv(gym.Env):
                 "mission_gate": mission_reason,
                 "raw_throttle": raw_throttle,
                 "best_hazard": float(self._mission.best_hazard),
+                "pointing_command": pointing_cmd.astype(np.float32),
+                "tilt_deg": float(self._current_tilt_deg()),
             }
         )
 
@@ -753,6 +873,17 @@ class AsteroidLandingEnv(gym.Env):
             "mission_mode": self._mission.mode,
             "best_hazard": float(self._mission.best_hazard),
             "orbit_approach_range_m": float(self.config.orbit_approach_range_m),
+            "max_thrust": float(self.config.max_thrust),
+            "gravity_mass_ref": float(self.config.gravity_mass_ref),
+            "gravity_mu": float(self.config.gravity_mu),
+            "asteroid_com_N": tuple(
+                float(x) for x in self.config.asteroid_com_N
+            )
+            if hasattr(self.config, "asteroid_com_N")
+            else (0.0, 0.0, -150.0),
+            "hover_throttle": self._hover_throttle_estimate(),
+            "position_N": self._position_N_tuple(),
+            "tilt_deg": float(self._current_tilt_deg()),
         }
 
     def _point_at_target(self, position_N: np.ndarray) -> None:
@@ -828,18 +959,34 @@ class AsteroidLandingEnv(gym.Env):
         target = self.config.target_array()
         self._scenic_sigma = None
         if self.config.orbital_reset:
-            position, velocity, sigma = sample_elliptical_start(
-                rng,
-                mu=float(self.config.gravity_mu),
-                com_N=self.config.asteroid_com_N,
-                a_min_m=float(self.config.orbit_a_min_m),
-                a_max_m=float(self.config.orbit_a_max_m),
-                e_min=float(self.config.orbit_e_min),
-                e_max=float(self.config.orbit_e_max),
-                periapsis_floor_m=float(self.config.orbit_periapsis_floor_m),
-                inclination_max_deg=float(self.config.orbit_inclination_max_deg),
-                miss_pointing=not self.config.auto_point,
-            )
+            clearance = float(self.config.orbit_min_clearance_m)
+            position = velocity = sigma = None
+            for _ in range(48):
+                position, velocity, sigma = orbital_or_default(
+                    rng,
+                    enabled=True,
+                    mu=float(self.config.gravity_mu),
+                    com_N=self.config.asteroid_com_N,
+                    start_mode=str(self.config.orbit_start_mode),
+                    target_N=target,
+                    approach_prob=float(self.config.orbit_approach_prob),
+                    a_min_m=float(self.config.orbit_a_min_m),
+                    a_max_m=float(self.config.orbit_a_max_m),
+                    e_min=float(self.config.orbit_e_min),
+                    e_max=float(self.config.orbit_e_max),
+                    periapsis_floor_m=float(self.config.orbit_periapsis_floor_m),
+                    inclination_max_deg=float(self.config.orbit_inclination_max_deg),
+                    miss_pointing=not self.config.auto_point,
+                )
+                alt = float(self._altitude_above_terrain(position))
+                spd = float(np.linalg.norm(velocity))
+                if alt >= clearance and spd < 25.0:
+                    break
+            else:
+                # Guaranteed safe approach fallback above the pad.
+                position = target + np.array([0.0, 0.0, 100.0], dtype=np.float64)
+                velocity = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+                sigma = np.zeros(3, dtype=np.float64)
             self._scenic_sigma = sigma
             return position, velocity
         if self.config.scenic_like_randomize:
@@ -1074,6 +1221,32 @@ class AsteroidLandingEnv(gym.Env):
             + self.config.altitude_progress_weight * alt_progress
         ) * safe_progress_scale
 
+        # Orbital extras (default weights 0 → Phase-1 unchanged).
+        if self.handles is not None and (
+            float(self.config.orbital_range_progress_weight) > 0.0
+            or float(self.config.orbital_lateral_progress_weight) > 0.0
+        ):
+            target = self.config.target_array()
+            r, _v = self._get_latest_state()
+            # Approximate previous lateral/range via truth distance change already
+            # in site_progress; add lateral closing using current lateral vs
+            # previous distance decomposition stored on the env when available.
+            lateral = float(np.linalg.norm(np.asarray(r[:2]) - target[:2]))
+            prev_lateral = float(getattr(self, "_prev_lateral_for_reward", lateral))
+            lateral_progress = prev_lateral - lateral
+            self._prev_lateral_for_reward = lateral
+            reward_progress += (
+                float(self.config.orbital_lateral_progress_weight)
+                * lateral_progress
+                * safe_progress_scale
+            )
+            # site_progress already covers range; amplify for orbital curriculum.
+            reward_progress += (
+                float(self.config.orbital_range_progress_weight)
+                * site_progress
+                * safe_progress_scale
+            )
+
         proximity = float(np.clip(1.0 - altitude / 40.0, 0.0, 1.0))
         reward_speed_penalty = (
             -self.config.speed_weight * speed
@@ -1081,6 +1254,13 @@ class AsteroidLandingEnv(gym.Env):
         )
         reward_fuel_penalty = -self.config.fuel_weight * (throttle ** 2)
         reward_terminal = 0.0
+
+        # Upright training signal: penalize thruster tilt near the pad.
+        reward_tilt = 0.0
+        if bool(self.config.require_upright) and self.handles is not None:
+            tilt = float(self._current_tilt_deg())
+            near = float(np.clip(1.0 - altitude / 60.0, 0.0, 1.0))
+            reward_tilt = -0.02 * near * (tilt / 90.0) ** 2
 
         _terminated, reason = self._check_terminated(obs)
         if reason == "safe_landing":
@@ -1091,13 +1271,18 @@ class AsteroidLandingEnv(gym.Env):
             reward_terminal -= self.config.escape_penalty
 
         reward_total = (
-            reward_progress + reward_speed_penalty + reward_fuel_penalty + reward_terminal
+            reward_progress
+            + reward_speed_penalty
+            + reward_fuel_penalty
+            + reward_tilt
+            + reward_terminal
         )
         terms = {
             "reward_total": float(reward_total),
             "reward_progress": float(reward_progress),
             "reward_speed_penalty": float(reward_speed_penalty),
             "reward_fuel_penalty": float(reward_fuel_penalty),
+            "reward_tilt": float(reward_tilt),
             "reward_terminal": float(reward_terminal),
         }
         return float(reward_total), terms
@@ -1126,12 +1311,18 @@ class AsteroidLandingEnv(gym.Env):
 
         if altitude < self.config.penetration_altitude:
             return True, "crash"
+        tilt_ok = True
+        tilt_deg = 0.0
+        if bool(self.config.require_upright):
+            tilt_deg = float(self._current_tilt_deg())
+            tilt_ok = tilt_deg <= float(self.config.success_tilt_deg)
         if (
             self.config.min_success_altitude
             <= altitude
             <= self.config.success_altitude
             and speed <= self.config.success_speed
             and lateral <= self.config.success_lateral
+            and tilt_ok
         ):
             return True, "safe_landing"
         if altitude <= self.config.crash_altitude and speed > self.config.crash_speed:
@@ -1139,6 +1330,39 @@ class AsteroidLandingEnv(gym.Env):
         if distance >= self.config.escape_radius:
             return True, "escaped"
         return False, None
+
+    def _position_N_tuple(self) -> Tuple[float, float, float]:
+        """Latest hub inertial position, or target if sim not ready."""
+        if self.handles is None:
+            t = self.config.target_array()
+            return (float(t[0]), float(t[1]), float(t[2]))
+        r, _v = self._get_latest_state()
+        return (float(r[0]), float(r[1]), float(r[2]))
+
+    def _hover_throttle_estimate(self) -> float:
+        """Throttle that cancels weight at the current position (central g)."""
+        if str(self.config.gravity_mode).lower() != "central":
+            # Phase-1 constant gravity: ~200 N down vs max_thrust.
+            return float(
+                np.clip(200.0 / max(float(self.config.max_thrust), 1e-9), 0.0, 1.0)
+            )
+        return float(
+            hover_throttle_central(
+                self._position_N_tuple(),
+                mu=float(self.config.gravity_mu),
+                mass=float(self.config.gravity_mass_ref),
+                max_thrust=float(self.config.max_thrust),
+                com_N=self.config.asteroid_com_N,
+            )
+        )
+
+    def _current_tilt_deg(self) -> float:
+        """Tilt between body +z thruster and local-up (0 = upright brake)."""
+        if self.handles is None:
+            return 0.0
+        r, _v = self._get_latest_state()
+        up = local_up_N(r, self.config.asteroid_com_N)
+        return float(thruster_up_tilt_deg(self._sigma_BN, up))
 
 
 def _get_body_geom_info(scene: mujoco.MJScene, body_name: str):

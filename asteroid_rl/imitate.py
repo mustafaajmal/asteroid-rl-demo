@@ -23,6 +23,7 @@ def collect_scripted_transitions(
     episodes: int = 8,
     max_steps: int = 1000,
     orbit: bool = False,
+    autonomous: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Roll out a scripted baseline and stack observations / actions.
 
@@ -31,13 +32,19 @@ def collect_scripted_transitions(
         episodes: Number of scripted episodes to collect.
         max_steps: Cap on steps per episode.
         orbit: If True, use ``scripted_orbit_action`` (4-D).
+        autonomous: If True, use ``scripted_autonomous_action`` (4-D).
 
     Returns:
         Tuple ``(observations, actions)`` with shapes ``(N, obs_dim)`` and
         ``(N, act_dim)``.
     """
     env = AsteroidLandingEnv(config=config)
-    action_fn = scripted_orbit_action if orbit else scripted_action
+    if autonomous:
+        from asteroid_rl.policies import scripted_autonomous_action as action_fn
+    elif orbit:
+        action_fn = scripted_orbit_action
+    else:
+        action_fn = scripted_action
     obs_list: List[np.ndarray] = []
     act_list: List[np.ndarray] = []
     for _ in range(int(episodes)):
@@ -53,6 +60,40 @@ def collect_scripted_transitions(
     if not obs_list:
         raise RuntimeError("No scripted transitions collected")
     return np.stack(obs_list, axis=0), np.stack(act_list, axis=0)
+
+
+def warmstart_from_scripted(
+    model,
+    config: LandingEnvConfig,
+    *,
+    episodes: int = 8,
+    epochs: int = 30,
+    orbit: bool = False,
+    autonomous: bool = False,
+) -> float:
+    """Collect scripted demos and behavior-clone the PPO policy.
+
+    Args:
+        model: PPO model to warm-start in place.
+        config: Env config matching the model's observation space.
+        episodes: Scripted episodes for the demo dataset.
+        epochs: BC optimization epochs.
+        orbit: If True, clone ``scripted_orbit_action``.
+        autonomous: If True, clone ``scripted_autonomous_action``.
+
+    Returns:
+        Final BC loss.
+    """
+    obs, acts = collect_scripted_transitions(
+        config,
+        episodes=episodes,
+        orbit=orbit,
+        autonomous=autonomous,
+        max_steps=2500 if (orbit or autonomous) else 1000,
+    )
+    loss = behavior_clone_ppo(model, obs, acts, epochs=epochs)
+    print(f"Behavior-clone warm-start done: n={len(obs)} final_mse={loss:.6f}")
+    return loss
 
 
 def behavior_clone_ppo(
@@ -104,31 +145,3 @@ def behavior_clone_ppo(
             count += 1
         last_loss = total / max(count, 1)
     return last_loss
-
-
-def warmstart_from_scripted(
-    model,
-    config: LandingEnvConfig,
-    *,
-    episodes: int = 8,
-    epochs: int = 30,
-    orbit: bool = False,
-) -> float:
-    """Collect scripted demos and behavior-clone the PPO policy.
-
-    Args:
-        model: PPO model to warm-start in place.
-        config: Env config matching the model's observation space.
-        episodes: Scripted episodes for the demo dataset.
-        epochs: BC optimization epochs.
-        orbit: If True, clone ``scripted_orbit_action``.
-
-    Returns:
-        Final BC loss.
-    """
-    obs, acts = collect_scripted_transitions(
-        config, episodes=episodes, orbit=orbit, max_steps=2500 if orbit else 1000
-    )
-    loss = behavior_clone_ppo(model, obs, acts, epochs=epochs)
-    print(f"Behavior-clone warm-start done: n={len(obs)} final_mse={loss:.6f}")
-    return loss

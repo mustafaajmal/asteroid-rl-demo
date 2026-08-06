@@ -143,21 +143,75 @@ def sample_elliptical_start(
     return position, velocity, sigma
 
 
+def sample_approach_start(
+    rng: np.random.Generator,
+    *,
+    target_N: Sequence[float],
+    range_min_m: float = 45.0,
+    range_max_m: float = 90.0,
+    closing_speed_min: float = 0.3,
+    closing_speed_max: float = 0.9,
+    miss_pointing: bool = True,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sample a near-pad inbound approach (curriculum / BC-friendly).
+
+    Places the craft on a random ray from the fixed landing site with a mostly
+    inbound velocity. Harder than Phase-1 hover but much easier than a full
+    ellipse — used to teach divert + soft-land before full orbital starts.
+
+    Args:
+        rng: NumPy random generator.
+        target_N: Fixed landing site inertial position, meters.
+        range_min_m: Minimum initial range to site, meters.
+        range_max_m: Maximum initial range to site, meters.
+        closing_speed_min: Min inbound speed magnitude, m/s.
+        closing_speed_max: Max inbound speed magnitude, m/s.
+        miss_pointing: If True, return a random initial MRP.
+
+    Returns:
+        Tuple ``(position_N, velocity_N, sigma_BN)``.
+    """
+    target = np.asarray(target_N, dtype=np.float64).reshape(3)
+    direction = rng.normal(0.0, 1.0, size=3)
+    # Bias "above" the pad (+z) so altitude stays positive on flat/mesh.
+    direction[2] = abs(float(direction[2])) + 0.8
+    direction = direction / max(float(np.linalg.norm(direction)), 1e-12)
+    range_m = float(rng.uniform(range_min_m, range_max_m))
+    position = target + direction * range_m
+    closing = float(rng.uniform(closing_speed_min, closing_speed_max))
+    # Mostly inbound, small lateral jitter so divert must correct.
+    jitter = rng.normal(0.0, 0.12, size=3)
+    velocity = -closing * direction + jitter
+    if miss_pointing:
+        sigma = rng.uniform(-0.4, 0.4, size=3).astype(np.float64)
+    else:
+        sigma = np.zeros(3, dtype=np.float64)
+    return position, velocity, sigma
+
+
 def orbital_or_default(
     rng: Optional[np.random.Generator],
     *,
     enabled: bool,
     mu: float = DEFAULT_MU,
     com_N: Sequence[float] = DEFAULT_ASTEROID_COM_N,
+    start_mode: str = "ellipse",
+    target_N: Optional[Sequence[float]] = None,
+    approach_prob: float = 0.55,
+    scenic_prob: float = 0.25,
     **kwargs,
 ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
-    """Return an elliptical start when enabled, else ``(None, None, None)``.
+    """Return an orbital/approach/scenic start when enabled, else nulls.
 
     Args:
         rng: Random generator (created if ``None`` and enabled).
         enabled: If False, returns nulls so the caller uses Phase-1 defaults.
         mu: Gravitational parameter.
         com_N: Asteroid COM.
+        start_mode: ``ellipse`` | ``approach`` | ``mixed`` | ``autonomous``.
+        target_N: Landing site (required for approach / mixed / autonomous).
+        approach_prob: Probability of approach starts when ``start_mode=mixed``.
+        scenic_prob: Extra probability of scenic-like starts in ``autonomous``.
         **kwargs: Forwarded to ``sample_elliptical_start``.
 
     Returns:
@@ -166,6 +220,36 @@ def orbital_or_default(
     if not enabled:
         return None, None, None
     generator = rng or np.random.default_rng()
+    mode = str(start_mode).lower()
+
+    if mode == "autonomous" and target_N is not None:
+        u = float(generator.random())
+        # ~45% approach, ~25% scenic-like miss-pointing, rest ellipse.
+        ap = float(np.clip(approach_prob, 0.0, 0.9))
+        sp = float(np.clip(scenic_prob, 0.0, 1.0 - ap))
+        if u < ap:
+            return sample_approach_start(generator, target_N=target_N)
+        if u < ap + sp:
+            from asteroid_rl.scenic_reset import sample_scenic_like_start
+
+            return sample_scenic_like_start(
+                np.asarray(target_N, dtype=np.float64),
+                generator,
+                miss_pointing=True,
+            )
+        pos, vel, sigma = sample_elliptical_start(
+            generator, mu=mu, com_N=com_N, **kwargs
+        )
+        return pos, vel, sigma
+
+    use_approach = mode == "approach" or (
+        mode == "mixed"
+        and target_N is not None
+        and float(generator.random()) < float(approach_prob)
+    )
+    if use_approach and target_N is not None:
+        pos, vel, sigma = sample_approach_start(generator, target_N=target_N)
+        return pos, vel, sigma
     pos, vel, sigma = sample_elliptical_start(
         generator, mu=mu, com_N=com_N, **kwargs
     )

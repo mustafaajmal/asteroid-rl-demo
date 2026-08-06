@@ -21,6 +21,42 @@ DEFAULT_MU = 15000.0
 DEFAULT_SPACECRAFT_MASS_REF = 1600.0
 
 
+def hover_throttle_central(
+    position_N: Sequence[float],
+    *,
+    mu: float = DEFAULT_MU,
+    mass: float = DEFAULT_SPACECRAFT_MASS_REF,
+    max_thrust: float = 2500.0,
+    com_N: Sequence[float] = DEFAULT_ASTEROID_COM_N,
+) -> float:
+    """Throttle fraction that cancels central-gravity weight at ``position_N``.
+
+    Under point-mass gravity, ``g = µ / r^2`` varies strongly with altitude, so a
+    fixed hover fraction (e.g. pad-level ~0.66) will *climb forever* higher up
+    where true hover is ~0.2–0.4. Scripted settle must use this estimate.
+
+    Args:
+        position_N: Hub inertial position, meters.
+        mu: Gravitational parameter, m^3/s^2.
+        mass: Spacecraft mass, kg.
+        max_thrust: Thruster force at throttle 1.0, Newtons.
+        com_N: Asteroid COM inertial position, meters.
+
+    Returns:
+        Hover throttle in ``[0, 1]``.
+    """
+    pos = np.asarray(position_N, dtype=np.float64).reshape(3)
+    com = np.asarray(com_N, dtype=np.float64).reshape(3)
+    r = float(np.linalg.norm(pos - com))
+    if r < 1.0:
+        r = 1.0
+    weight = float(mass) * float(mu) / (r * r)
+    thr = float(max_thrust)
+    if thr <= 1e-9:
+        return 1.0
+    return float(np.clip(weight / thr, 0.0, 1.0))
+
+
 class ConstantGravity(sysModel.SysModel):
     """Basilisk SysModel that applies a constant inertial force as "gravity".
 

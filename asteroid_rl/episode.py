@@ -40,6 +40,8 @@ def write_episode_csv(rows: List[dict], path: str) -> None:
     """
     if not rows:
         return
+    if path is None:
+        return
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)

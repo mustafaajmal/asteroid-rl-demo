@@ -1,7 +1,8 @@
-"""Train PPO for elliptical-orbit point+throttle GNC landing.
+"""Train PPO for the full autonomous mission stack.
 
-Uses central gravity, elliptical resets, BC warm-start from ``scripted_orbit``,
-then PPO fine-tuning. Prefer the EvalCallback best zip over the final zip.
+Uses ``apply_autonomous_defaults()``: central gravity, scenic∪orbit starts,
+mission FSM, upright soft-land gate, BC from ``scripted_autonomous``, then PPO.
+Prefer the EvalCallback best zip over the final zip.
 """
 
 from __future__ import annotations
@@ -19,43 +20,43 @@ from asteroid_rl.imitate import warmstart_from_scripted
 
 
 def parse_args() -> Namespace:
-    """Parse orbital PPO training arguments."""
-    parser = argparse.ArgumentParser(description="Train orbital point+throttle PPO")
+    """Parse autonomous PPO training arguments."""
+    parser = argparse.ArgumentParser(description="Train autonomous multi-phase PPO")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--timesteps", type=int, default=30000)
-    parser.add_argument("--bc-episodes", type=int, default=4)
+    parser.add_argument("--timesteps", type=int, default=50000)
+    parser.add_argument("--bc-episodes", type=int, default=8)
     parser.add_argument(
         "--out",
         type=str,
-        default="outputs/ppo_orbital_final.zip",
+        default="outputs/ppo_autonomous_final.zip",
     )
     parser.add_argument(
         "--best-dir",
         type=str,
-        default="outputs/best_model_orbital",
+        default="outputs/best_model_autonomous",
     )
     return parser.parse_args()
 
 
-def make_orbital_config(seed: int) -> LandingEnvConfig:
-    """Build the standard orbital training env config."""
+def make_autonomous_config(seed: int) -> LandingEnvConfig:
+    """Build the standard autonomous training env config."""
     cfg = LandingEnvConfig(seed=seed)
-    cfg.apply_orbital_defaults()
+    cfg.apply_autonomous_defaults()
     return cfg
 
 
 def main() -> None:
-    """BC warm-start then PPO train on elliptical-orbit landings."""
+    """BC warm-start then PPO train on autonomous landings."""
     args = parse_args()
     ensure_dirs()
     os.makedirs(args.best_dir, exist_ok=True)
-    os.makedirs("outputs/checkpoints_orbital", exist_ok=True)
-    os.makedirs("outputs/eval_logs_orbital", exist_ok=True)
+    os.makedirs("outputs/checkpoints_autonomous", exist_ok=True)
+    os.makedirs("outputs/eval_logs_autonomous", exist_ok=True)
 
-    config = make_orbital_config(args.seed)
+    config = make_autonomous_config(args.seed)
     env = AsteroidLandingEnv(config=config)
-    eval_env = AsteroidLandingEnv(config=make_orbital_config(args.seed + 1))
+    eval_env = AsteroidLandingEnv(config=make_autonomous_config(args.seed + 1))
 
     model = PPO(
         "MlpPolicy",
@@ -70,26 +71,32 @@ def main() -> None:
     )
 
     if args.bc_episodes > 0:
-        print(f"BC warm-start from scripted_orbit ({args.bc_episodes} episodes)...")
+        print(
+            f"BC warm-start from scripted_autonomous ({args.bc_episodes} episodes)..."
+        )
         warmstart_from_scripted(
-            model, config, episodes=args.bc_episodes, epochs=25, orbit=True
+            model,
+            config,
+            episodes=args.bc_episodes,
+            epochs=25,
+            autonomous=True,
         )
 
     eval_cb = EvalCallback(
         eval_env,
         best_model_save_path=args.best_dir,
-        log_path="outputs/eval_logs_orbital",
+        log_path="outputs/eval_logs_autonomous",
         eval_freq=2048,
         n_eval_episodes=4,
         deterministic=True,
     )
     ckpt_cb = CheckpointCallback(
         save_freq=4096,
-        save_path="outputs/checkpoints_orbital",
-        name_prefix="ppo_orbital",
+        save_path="outputs/checkpoints_autonomous",
+        name_prefix="ppo_autonomous",
     )
 
-    print(f"Training orbital PPO for {args.timesteps} timesteps on {args.device}...")
+    print(f"Training autonomous PPO for {args.timesteps} timesteps on {args.device}...")
     model.learn(total_timesteps=int(args.timesteps), callback=[eval_cb, ckpt_cb])
     model.save(args.out)
     print(f"Saved final model to {args.out}")

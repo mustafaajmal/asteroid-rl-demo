@@ -7,7 +7,9 @@ schema as the planned VLM) support the imaging → decision loop without
 Scenic/VLM yet.
 
 Cross-session notes for Cursor / multi-machine work live in [`WORK_DIARY.md`](WORK_DIARY.md)
-(append-only). Commit that file when you switch machines.
+(append-only). Agent operating instructions (phases, commands, pitfalls, test
+gates) live in [`AGENTS.md`](AGENTS.md) — **read that before non-trivial agent work**.
+Commit the diary when you switch machines.
 
 ## Layout
 

@@ -23,25 +23,28 @@ Before coding on this repo:
 
 ## Current state (edit in place)
 
-- **Repo role:** Phase-1 fixed-site landing **plus** Phase-2 orbital GNC slice (central gravity + elliptical reset + point/throttle).
+- **Repo role:** Phase-1 fixed-site + Phase-2 orbital + **Phase-3 autonomous** (mission FSM + upright gate + scenic∪orbit starts).
 - **Package root:** `asteroid_rl/` at repo root (not `src/`).
-- **Success metric:** Surface altitude / speed / lateral (Itokawa heightmap or radial shell off-map; optional flat plane).
-- **PPO gate (truth, Phase-1):** Met on M2; use `outputs/best_model_truth_mesh_fixed/best_model.zip` for reliable landings (not the hover-prone `v2` final zip).
-- **Orbital GNC:** `--orbital` / `train_orbital_ppo`; BC + 20k PPO smoke run saved `outputs/ppo_orbital_final.zip` and `outputs/best_model_orbital/best_model.zip` (not yet reliably `safe_landing` — needs longer home-PC train).
-- **Sensors/perception/VLM/mission/scenic-like:** unchanged scaffolding from prior sessions.
-- **Vizard:** macOS liveStream; Windows save-file default.
-- **Hardware:** M2 short runs; home PC for long orbital PPO + VLM GPU.
+- **Success metric:** alt/speed/lateral; autonomous also requires **tilt ≤ success_tilt_deg** when `require_upright`.
+- **PPO Phase-1:** `outputs/best_model_truth_mesh_fixed/best_model.zip`.
+- **PPO orbital:** prefer `outputs/best_model_orbital/best_model.zip` (~16.7% approach land without upright gate).
+- **Upright GNC (2026-08-06):** Sensors are **not** the bottleneck (privileged `r,v,σ` already available). Root bugs were thruster-vs-up axis, underpowered thrust, **fixed pad-level hover under central-g**, and **look-at-pad settle tilt**. Scripted autonomous approach+upright now **~62.5%** `safe_landing` (was ~0–12%).
+- **PPO autonomous:** 200k train **in progress** (`logs/train_autonomous_upright_200k.log`, 20-ep BC from improved expert) → prefer new `outputs/best_model_autonomous/best_model.zip` when done.
+- **Mission FSM:** search → acquire → divert → upright (near approaches auto-commit divert).
+- **Tests:** upright/hover + related **19** unit tests green; full suite TBD after train.
+- **Vizard:** Windows save-file default.
+- **Hardware:** home PC long trains.
 
 ---
 
 ## Open threads (edit in place)
 
-- [ ] Longer orbital PPO (`--timesteps 1e5+`) until `safe_landing` from ellipse is routine; keep EvalCallback best zip.
-- [ ] Improve `scripted_orbit` deorbit→pad transfer for better BC demos.
-- [ ] Longer home-PC curriculum especially `--obs-mode perception`.
-- [ ] Install transformers + Qwen weights; run `--perception vlm --camera`.
-- [ ] Optional real Scenic package later.
-- [ ] Full `bsk_rl` still optional.
+- [ ] Finish 200k train; eval best zip with upright gate (target ≥ scripted ~60%).
+- [ ] Trim remaining ~5–7 m hover timeouts / rare escapes in scripted settle.
+- [ ] Retarget success/reward to mission candidate site after upright divert works.
+- [ ] Optional later: wire real Basilisk `imuSensor` / `starTracker` / `reactionWheels` (realism, not unlock).
+- [ ] Mesh after flat autonomous is solid; VLM play with `--perception vlm --camera`.
+- [ ] Optional real Scenic package later; full `bsk_rl` still optional.
 
 ---
 
@@ -52,6 +55,8 @@ Before coding on this repo:
 3. `When changing reward or obs, keep reward on truth; only change what the policy sees.`
 4. `Scripted baseline must keep working via info["truth_state"] / info telemetry even if obs_mode != truth.`
 5. `Prefer appending to this diary over rewriting chat history.`
+6. `Orbital/autonomous: always eval best_model_* zip, not the final zip.`
+7. `Phase-1 defaults: require_upright=False, constant gravity, 1-D throttle.`
 
 ---
 
@@ -194,6 +199,59 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 - **Runs:** BC mse≈0.004; PPO 20k steps → `outputs/ppo_orbital_final.zip` + `outputs/best_model_orbital/best_model.zip`. Scripted/PPO not yet reliable `safe_landing` from ellipse (needs longer train).
 - **Gotchas:** Heightmap altitude sentinel off-map → use radial shell; Phase-1 defaults unchanged.
 - **Next:** Longer `--timesteps 1e5+` on home PC; improve scripted deorbit→pad.
+
+---
+
+### 2026-08-05/06 — Orbital GNC 100k push (planning doc Phase-2)
+
+- **Prompt / goal:** ~120m orbital GNC: improve `scripted_orbit` divert, train 100k PPO, eval best zip, implement planning-doc pieces reasonably, thoroughly test.
+- **Changes:**
+  - `scripted_orbit`: velocity-target divert toward fixed pad + near-pad lateral cancel then LOS brake (not anti-velocity-only).
+  - Curriculum: `orbit_start_mode=mixed` + `sample_approach_start`; **flat pad** in `apply_orbital_defaults` (planning-doc flat-before-mesh); `orbit_min_clearance_m` reject (mesh ellipse ICs were spawning underground → km/s contact explosions).
+  - Orbital reward extras: `orbital_range_progress_weight` / `orbital_lateral_progress_weight` (0 on Phase-1).
+  - CLI: `evaluate_orbital.py`; AGENTS.md Phase-2 docs updated.
+  - Tests: approach sampler, Phase-1 default regression, policies divert; **21 pytest passed**. Phase-1 scripted still `safe_landing`.
+- **Files:** `policies.py`, `orbit_reset.py`, `env.py`, `episode.py` (None csv), `cli/train_orbital_ppo.py`, `cli/evaluate_orbital.py`, `AGENTS.md`, `tests/*`, `WORK_DIARY.md`.
+- **Runs / results:**
+  - Train: `train_orbital_ppo --timesteps 100000 --bc-episodes 8 --device cpu` (~805s, ~124 fps). Best eval mean_reward peaked ~**-279**. Saved `outputs/best_model_orbital/best_model.zip` + `outputs/ppo_orbital_final.zip`.
+  - Scripted flat approach: **~12.5%** safe_landing (2/16, seed 50).
+  - PPO **best** flat approach: **16.7%** (2/12, seed 200). PPO **final** same seeds: **0%** — prefer best zip.
+  - PPO best mixed: 0/8 (still hard).
+- **Gotchas:** Ellipse without clearance → altitude negative + speed ~1400 m/s. Aggressive PD/`m*|a|` throttle escapes. Point-at-site thrust = brake away; divert needs thrust *toward* pad (point away).
+- **Next:** More BC from improved scripted + longer train; then drop flat / raise ellipse fraction; perception/VLM later.
+
+---
+
+### 2026-08-06 — Full autonomous landing stack
+
+- **Prompt / goal:** Implement planning-doc autonomous stack: mission FSM, upright gate, scenic∪orbit, scripted_autonomous, train/eval CLIs; don’t break Phase-1.
+- **Changes:**
+  - `mission.py`: modes `search|acquire|divert|upright|land`; near-pad auto-commit divert; pointing suggestions; throttle gates.
+  - `pointing.py`: `local_up_N`, `boresight_tilt_deg`.
+  - `env.py`: `require_upright` / tilt success (default off); `apply_autonomous_defaults()`; mission bootstrap on reset; `info` tilt + pointing_command.
+  - `orbit_reset.py`: `start_mode=autonomous` mixes approach/scenic/ellipse.
+  - `policies.py`: `scripted_autonomous_action`; play `--autonomous`.
+  - CLIs: `train_autonomous_ppo`, `evaluate_autonomous`.
+  - Tests: mission/upright/autonomous; **33 pytest passed**; Phase-1 still lands.
+- **Runs:** 100k autonomous PPO → `outputs/best_model_autonomous/best_model.zip` (best eval ~-344). Approach+upright eval: **0/10** safe_landing (mean min_dist ~23 m — closes in, fails settle/tilt). Isolation: success still fixed pad.
+- **Gotchas:** Mission search throttle-cap starved divert until near-approach auto-commit + reset bootstrap. Upright gate makes success much harder than orbital-only.
+- **Next:** Harden upright settle in scripted_autonomous; more BC; then candidate-site retarget; VLM play.
+
+---
+
+### 2026-08-06 — Upright land: sensors vs GNC + gravity-aware settle
+
+- **Prompt / goal:** What sensors are needed to land upright? Why isn’t more compute enough? Implement everything needed + train more.
+- **Answer (Basilisk sensors docs):** `imuSensor`, `starTracker`, `camera`, plus actuators `reactionWheels` / thrusters. **Do not need more sensors to unlock upright today** — privileged hub state already has attitude/rate/position. Sensors add flight-like noise; RW would help attitude without thruster coupling. Bottleneck was GNC + actuation.
+- **Why not just compute:** PPO/BC was cloning a broken expert (wrong thruster axis earlier; then fixed hover=0.66 at all altitudes under central-g where true hover is ~0.23 at 85 m; then look-at-pad settle caused ~atan(L/h) tilt and failed upright gate).
+- **Changes:**
+  - `gravity.hover_throttle_central` + env `info["hover_throttle"]` / `position_N` / `gravity_mu`.
+  - `scripted_autonomous`: altitude-adaptive hover + vertical-rate tracking; **local-up settle pointing** (not look-at-pad); divert only for large lateral / horiz speed.
+  - Autonomous defaults: upright cone 120 m / 50 m; `success_speed=0.85`.
+  - `nav.py` notes updated from Basilisk sensors page.
+- **Runs:** scripted approach+upright **15/24 = 62.5%** safe_landing (`outputs/eval_upright_scripted_localup.json`). Stopped stale 150k train; started **200k + 20-ep BC** → `logs/train_autonomous_upright_200k.log`.
+- **Gotchas:** Under central gravity, hover throttle **must** track `µ/r²`. Look-at-pad near overhead is almost never upright.
+- **Next:** Eval PPO best zip when 200k finishes; optional RW later.
 
 ---
 
