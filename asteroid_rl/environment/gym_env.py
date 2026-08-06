@@ -34,7 +34,7 @@ from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, macros
 from Basilisk.utilities import vizSupport
 
-from asteroid_rl.gravity import (
+from asteroid_rl.dynamics.gravity import (
     DEFAULT_ASTEROID_COM_N,
     DEFAULT_MU,
     DEFAULT_SPACECRAFT_MASS_REF,
@@ -42,51 +42,44 @@ from asteroid_rl.gravity import (
     ConstantGravity,
     hover_throttle_central,
 )
-from asteroid_rl.mission import (
+from asteroid_rl.control.mission import (
     MissionConfig,
     MissionState,
     mission_pointing_command,
     mission_throttle_gate,
     update_mission,
 )
-from asteroid_rl.observations import (
+from asteroid_rl.environment.observations import (
     encode_agent_observation,
     observation_dim,
     pack_orbital_vector,
     pack_truth_vector,
     validate_obs_mode,
 )
-from asteroid_rl.orbit_reset import orbital_or_default
-from asteroid_rl.pointing import (
+from asteroid_rl.dynamics.orbit_reset import orbital_or_default
+from asteroid_rl.dynamics.pointing import (
     apply_pointing,
     apply_pointing_direction,
     local_up_N,
     mrp_point_boresight_at,
     thruster_up_tilt_deg,
 )
-from asteroid_rl.scenic_reset import scenic_like_or_default
-from asteroid_rl.surface import default_landing_site, get_surface_map
-from asteroid_rl.vlm import DEFAULT_VLM_MODEL, PerceptionBackend
+from asteroid_rl.dynamics.scenic_reset import scenic_like_or_default
+from asteroid_rl.environment.surface import default_landing_site, get_surface_map
+from asteroid_rl.paths import ASSETS_DIR, EXAMPLES_DATA, EXAMPLES_MUJOCO
+from asteroid_rl.sensing.vlm import DEFAULT_VLM_MODEL, PerceptionBackend
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-_ASSETS_DIR = os.path.join(_REPO_ROOT, "assets")
-_EXAMPLES_MUJOCO = os.path.join(_REPO_ROOT, "examples", "mujoco")
-
-_ASSET_XML = os.path.join(_ASSETS_DIR, "sat_ast_landing.xml")
-_ASSET_OBJ = os.path.join(_ASSETS_DIR, "Itokawa", "ItokawaHayabusa.obj")
-_EXAMPLES_XML = os.path.join(_EXAMPLES_MUJOCO, "sat_ast_landing.xml")
-_EXAMPLES_OBJ = os.path.join(
-    _REPO_ROOT, "examples", "dataForExamples", "Itokawa", "ItokawaHayabusa.obj"
-)
+_ASSET_XML = os.path.join(ASSETS_DIR, "sat_ast_landing.xml")
+_ASSET_OBJ = os.path.join(ASSETS_DIR, "Itokawa", "ItokawaHayabusa.obj")
+_EXAMPLES_XML = os.path.join(EXAMPLES_MUJOCO, "sat_ast_landing.xml")
+_EXAMPLES_OBJ = os.path.join(EXAMPLES_DATA, "Itokawa", "ItokawaHayabusa.obj")
 
 XML_PATH = _ASSET_XML if os.path.isfile(_ASSET_XML) else _EXAMPLES_XML
 AST_OBJ_PATH = _ASSET_OBJ if os.path.isfile(_ASSET_OBJ) else _EXAMPLES_OBJ
 
 _TEXTURE_CANDIDATES = [
-    os.path.join(_ASSETS_DIR, "Itokawa", "ItokawaGrayscale.jpg"),
-    os.path.join(
-        _REPO_ROOT, "examples", "dataForExamples", "Itokawa", "ItokawaGrayscale.jpg"
-    ),
+    os.path.join(ASSETS_DIR, "Itokawa", "ItokawaGrayscale.jpg"),
+    os.path.join(EXAMPLES_DATA, "Itokawa", "ItokawaGrayscale.jpg"),
 ]
 AST_TEXTURE_PATH = next((p for p in _TEXTURE_CANDIDATES if os.path.isfile(p)), "")
 
@@ -821,7 +814,7 @@ class AsteroidLandingEnv(gym.Env):
         """
         if self.handles is None or self.handles.camera_mod is None:
             return None
-        from asteroid_rl.camera import read_camera_rgb
+        from asteroid_rl.sensing.camera import read_camera_rgb
 
         return read_camera_rgb(
             self.handles.camera_mod,
@@ -1589,7 +1582,7 @@ def _setup_vizard(
 
     camera_mod = None
     if enable_camera:
-        from asteroid_rl.camera import create_instrument_camera
+        from asteroid_rl.sensing.camera import create_instrument_camera
 
         camera_mod = create_instrument_camera(
             parent_name=SPACECRAFT_BODY_NAME,
@@ -1604,7 +1597,7 @@ def _setup_vizard(
         viz.settings.viewCameraViewHUD = 1
 
     if mode == "live":
-        from asteroid_rl.camera import launch_vizard_for_camera
+        from asteroid_rl.sensing.camera import launch_vizard_for_camera
 
         launch_vizard_for_camera(
             port=str(viz.reqPortNumber),

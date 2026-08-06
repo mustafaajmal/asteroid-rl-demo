@@ -66,31 +66,26 @@ Prove each layer before stacking the next.
 
 ```text
 asteroid_rl/
-  env.py              # Gym env, build_sim, success/crash, orbital hooks
-  gravity.py          # ConstantGravity | CentralGravity
-  orbit_reset.py      # Keplerian elliptical ICs about asteroid COM
-  surface.py          # Heightmap altitude + radial shell off-map
-  observations.py     # truth | sensors | perception | orbital packing
-  pointing.py         # MRP boresight / direction slews (instant outer loop)
-  policies.py         # scripted, scripted_orbit, random*, PPO wrappers
-  imitate.py          # BC warm-start from scripted / scripted_orbit
-  perception.py       # Geometry stub (VLM JSON schema)
-  vlm.py              # Qwen backend + fallback
-  mission.py          # Hazard search→land gate
-  scenic_reset.py     # PDF-style near-field random starts (no Scenic pkg)
-  camera.py           # Basilisk instrument camera + Vizard launch
-  episode.py          # run_episode / CSV
-  bsk_rl_api.py       # Partial Dict-obs adapter
+  environment/        # gym_env, episode, observations, surface
+  dynamics/           # gravity, pointing, orbit_reset, scenic_reset
+  control/            # policies, mission, nav, imitate
+  sensing/            # camera, perception stub, vlm
+  adapters/           # bsk_rl_api (Dict-obs)
+  analysis/           # plotting helpers
   cli/                # play, train_*, smoke_test, benchmark_*, evaluate, …
+  paths.py            # REPO_ROOT / ASSETS_DIR anchors
 assets/               # MuJoCo XML + Itokawa mesh + heightmap
+examples/             # Basilisk bskExamples dump (optional asset fallback)
+scripts/              # one-off diagnostics (not package entrypoints)
 tests/                # pytest unit + integration smokes
 AGENTS.md             # This file
 WORK_DIARY.md         # Cross-session memory
 README.md             # Human quickstart
 ```
 
-Package import root: **`asteroid_rl/`** (not `src/`). Run from repo root with
-`PYTHONPATH=.` if needed.
+Package import root: **`asteroid_rl/`** (not `src/`). Prefer submodule imports, e.g.
+`from asteroid_rl.environment.gym_env import AsteroidLandingEnv`. Run from repo
+root with `PYTHONPATH=.` if needed.
 
 ---
 
@@ -132,7 +127,7 @@ Package import root: **`asteroid_rl/`** (not `src/`). Run from repo root with
 - Starts: approach-heavy curriculum for settle; scenic/ellipse available via
   `orbit_start_mode`.
 - Isolation: success/reward still use the **fixed pad**.
-- Nav stand-in: [`asteroid_rl/nav.py`](asteroid_rl/nav.py) documents Basilisk
+- Nav stand-in: [`asteroid_rl/control/nav.py`](asteroid_rl/control/nav.py) documents Basilisk
   IMU / starTracker / reactionWheels mapping; privileged truth is used today.
 - Policy: `scripted_autonomous` or PPO from
   `outputs/best_model_autonomous/best_model.zip`.

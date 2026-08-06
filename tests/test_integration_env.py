@@ -9,9 +9,9 @@ basilisk = pytest.importorskip("Basilisk")
 
 
 def test_phase1_scripted_can_safe_land():
-    from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-    from asteroid_rl.episode import run_episode
-    from asteroid_rl.policies import scripted_action
+    from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+    from asteroid_rl.environment.episode import run_episode
+    from asteroid_rl.control.policies import scripted_action
 
     env = AsteroidLandingEnv(LandingEnvConfig(seed=0, reuse_sim=False))
     summary = run_episode(
@@ -27,8 +27,8 @@ def test_phase1_scripted_can_safe_land():
 
 
 def test_orbital_reset_and_step_shapes():
-    from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-    from asteroid_rl.policies import scripted_orbit_action
+    from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+    from asteroid_rl.control.policies import scripted_orbit_action
 
     cfg = LandingEnvConfig(seed=1).apply_orbital_defaults()
     env = AsteroidLandingEnv(cfg)
@@ -44,8 +44,8 @@ def test_orbital_reset_and_step_shapes():
 
 
 def test_autonomous_env_step_exposes_mission_and_tilt():
-    from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-    from asteroid_rl.policies import scripted_autonomous_action
+    from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+    from asteroid_rl.control.policies import scripted_autonomous_action
 
     cfg = LandingEnvConfig(seed=3).apply_autonomous_defaults()
     cfg.orbit_start_mode = "approach"
@@ -63,8 +63,8 @@ def test_autonomous_env_step_exposes_mission_and_tilt():
 
 def test_orbital_scripted_reduces_distance_over_window():
     """Velocity-target divert should generally shrink range over many steps."""
-    from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-    from asteroid_rl.policies import scripted_orbit_action
+    from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+    from asteroid_rl.control.policies import scripted_orbit_action
 
     cfg = LandingEnvConfig(seed=2).apply_orbital_defaults()
     cfg.orbit_start_mode = "approach"

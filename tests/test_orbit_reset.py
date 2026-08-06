@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from asteroid_rl.gravity import DEFAULT_ASTEROID_COM_N, DEFAULT_MU
-from asteroid_rl.orbit_reset import elements_to_rv, sample_elliptical_start
+from asteroid_rl.dynamics.gravity import DEFAULT_ASTEROID_COM_N, DEFAULT_MU
+from asteroid_rl.dynamics.orbit_reset import elements_to_rv, sample_elliptical_start
 
 
 def test_elements_circular_equatorial_energy():
@@ -48,7 +48,7 @@ def test_sample_elliptical_respects_periapsis_floor():
 
 
 def test_sample_approach_is_inbound_near_site():
-    from asteroid_rl.orbit_reset import sample_approach_start
+    from asteroid_rl.dynamics.orbit_reset import sample_approach_start
 
     rng = np.random.default_rng(3)
     target = np.array([0.0, 0.0, -20.0])
@@ -61,7 +61,7 @@ def test_sample_approach_is_inbound_near_site():
 
 
 def test_orbital_or_default_autonomous_can_emit_scenic():
-    from asteroid_rl.orbit_reset import orbital_or_default
+    from asteroid_rl.dynamics.orbit_reset import orbital_or_default
 
     rng = np.random.default_rng(7)
     target = np.array([0.0, 0.0, -30.0])

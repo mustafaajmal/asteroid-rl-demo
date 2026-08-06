@@ -10,7 +10,7 @@ from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
-from asteroid_rl.gravity import DEFAULT_ASTEROID_COM_N, DEFAULT_MU
+from asteroid_rl.dynamics.gravity import DEFAULT_ASTEROID_COM_N, DEFAULT_MU
 
 
 def _rotation_matrix(axis: np.ndarray, angle_rad: float) -> np.ndarray:
@@ -230,7 +230,7 @@ def orbital_or_default(
         if u < ap:
             return sample_approach_start(generator, target_N=target_N)
         if u < ap + sp:
-            from asteroid_rl.scenic_reset import sample_scenic_like_start
+            from asteroid_rl.dynamics.scenic_reset import sample_scenic_like_start
 
             return sample_scenic_like_start(
                 np.asarray(target_N, dtype=np.float64),

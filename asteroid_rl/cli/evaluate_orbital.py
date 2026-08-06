@@ -9,9 +9,9 @@ from pathlib import Path
 
 from stable_baselines3 import PPO
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.episode import ensure_dirs, run_episode
-from asteroid_rl.policies import make_action_fn
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.environment.episode import ensure_dirs, run_episode
+from asteroid_rl.control.policies import make_action_fn
 
 
 def parse_args() -> argparse.Namespace:

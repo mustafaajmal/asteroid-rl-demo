@@ -16,9 +16,9 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.observations import validate_obs_mode
-from asteroid_rl.perception import perception_feature_vector, perception_policy_features
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.environment.observations import validate_obs_mode
+from asteroid_rl.sensing.perception import perception_feature_vector, perception_policy_features
 
 
 class BskRlDictObservationEnv(gym.Env):

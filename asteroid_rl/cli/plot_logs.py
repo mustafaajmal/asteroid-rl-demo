@@ -11,7 +11,7 @@ from argparse import Namespace
 
 import pandas as pd
 
-from asteroid_rl.plotting import plot_metric_vs_time
+from asteroid_rl.analysis.plotting import plot_metric_vs_time
 
 
 def parse_args() -> Namespace:

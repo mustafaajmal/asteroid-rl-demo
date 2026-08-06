@@ -10,14 +10,14 @@ from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
-from asteroid_rl.gravity import (
+from asteroid_rl.dynamics.gravity import (
     DEFAULT_ASTEROID_COM_N,
     DEFAULT_MU,
     DEFAULT_SPACECRAFT_MASS_REF,
     hover_throttle_central,
 )
-from asteroid_rl.perception import perception_feature_vector
-from asteroid_rl.pointing import unit
+from asteroid_rl.sensing.perception import perception_feature_vector
+from asteroid_rl.dynamics.pointing import unit
 
 
 def _estimate_hover(info: Dict[str, Any], rel: np.ndarray, altitude: float) -> float:

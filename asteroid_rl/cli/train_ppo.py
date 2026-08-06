@@ -14,8 +14,8 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, EvalCallback
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.episode import ensure_dirs
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.environment.episode import ensure_dirs
 
 
 class ThrottleStatCallback(BaseCallback):

@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 
-from asteroid_rl.perception import perception_policy_features
+from asteroid_rl.sensing.perception import perception_policy_features
 
 OBS_MODES = ("truth", "sensors", "perception", "orbital")
 

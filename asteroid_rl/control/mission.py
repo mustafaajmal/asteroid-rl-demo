@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
-from asteroid_rl.pointing import local_up_N, unit
+from asteroid_rl.dynamics.pointing import local_up_N, unit
 
 MISSION_MODES = ("search", "acquire", "divert", "upright", "land")
 

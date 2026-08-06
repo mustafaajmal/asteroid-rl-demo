@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from asteroid_rl.env import LandingEnvConfig
-from asteroid_rl.gravity import hover_throttle_central
-from asteroid_rl.pointing import (
+from asteroid_rl.environment.gym_env import LandingEnvConfig
+from asteroid_rl.dynamics.gravity import hover_throttle_central
+from asteroid_rl.dynamics.pointing import (
     boresight_tilt_deg,
     local_up_N,
     mrp_point_boresight_along,
@@ -37,7 +37,7 @@ def test_local_up_points_away_from_com():
 
 def test_thruster_tilt_zero_when_firing_along_up():
     """Upright brake: boresight looks at ground (−up) ⇒ thrust along +up."""
-    from asteroid_rl.pointing import thruster_up_tilt_deg
+    from asteroid_rl.dynamics.pointing import thruster_up_tilt_deg
 
     up = np.array([0.0, 0.0, 1.0])
     # Point boresight along −up (look down).

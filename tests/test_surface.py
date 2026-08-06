@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from asteroid_rl.surface import ASTEROID_BODY_POSITION, get_surface_map
+from asteroid_rl.environment.surface import ASTEROID_BODY_POSITION, get_surface_map
 
 
 def test_heightmap_contains_origin_site():

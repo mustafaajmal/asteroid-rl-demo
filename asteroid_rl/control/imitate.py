@@ -13,8 +13,8 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.policies import scripted_action, scripted_orbit_action
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.control.policies import scripted_action, scripted_orbit_action
 
 
 def collect_scripted_transitions(
@@ -40,7 +40,7 @@ def collect_scripted_transitions(
     """
     env = AsteroidLandingEnv(config=config)
     if autonomous:
-        from asteroid_rl.policies import scripted_autonomous_action as action_fn
+        from asteroid_rl.control.policies import scripted_autonomous_action as action_fn
     elif orbit:
         action_fn = scripted_orbit_action
     else:

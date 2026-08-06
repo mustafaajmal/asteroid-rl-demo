@@ -13,10 +13,10 @@ from typing import List
 
 from stable_baselines3 import PPO
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.episode import ensure_dirs, run_episode, write_summary_markdown
-from asteroid_rl.observations import observation_dim
-from asteroid_rl.policies import make_action_fn
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.environment.episode import ensure_dirs, run_episode, write_summary_markdown
+from asteroid_rl.environment.observations import observation_dim
+from asteroid_rl.control.policies import make_action_fn
 
 
 PPO_V2_PATH = "outputs/ppo_asteroid_fixed_site_v2.zip"

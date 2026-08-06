@@ -15,21 +15,18 @@ Commit the diary when you switch machines.
 
 ```text
 asteroid_rl/
-  env.py              # Gym env, sim build, Vizard wiring
-  surface.py          # mesh heightmap altitude queries
-  camera.py           # Basilisk instrument camera helpers
-  pointing.py         # scripted attitude pointing at the site
-  perception.py       # geometry stub (VLM JSON schema)
-  vlm.py              # Qwen VLM backend (falls back to geometry)
-  mission.py          # hazard-gated search-then-land
-  scenic_reset.py     # PDF-style random starts (no Scenic pkg required)
-  imitate.py          # behavior-clone warm-start from scripted
-  policies.py         # scripted / random / PPO
-  episode.py          # shared run_episode / CSV / summaries
-  bsk_rl_api.py       # Dict-obs adapter shaped like BSK-RL (partial)
-  cli/                # play, train_curriculum, benchmark_suite, …
-assets/               # MuJoCo XML + Itokawa mesh + heightmap
-vendor/               # original Basilisk scenario (reference)
+  environment/   # Gym env, episode runner, observations, surface heightmap
+  dynamics/      # gravity, pointing, orbit / scenic-like starts
+  control/       # policies, mission FSM, nav notes, BC warm-start
+  sensing/       # camera, geometry perception stub, VLM backend
+  adapters/      # BSK-RL-shaped Dict-obs wrapper
+  analysis/      # shared plotting helpers
+  cli/           # play, train_*, evaluate_*, benchmark_*, smoke_test, …
+  paths.py       # repo / assets path anchors
+assets/          # MuJoCo XML + Itokawa mesh + heightmap
+examples/        # optional Basilisk bskExamples dump (asset fallback only)
+scripts/         # one-off diagnostic helpers
+tests/
 ```
 
 ## Setup

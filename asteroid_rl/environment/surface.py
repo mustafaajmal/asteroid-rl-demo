@@ -13,10 +13,9 @@ from typing import Tuple
 
 import numpy as np
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-_HEIGHTMAP_PATH = os.path.join(
-    _REPO_ROOT, "assets", "Itokawa", "surface_heightmap.npz"
-)
+from asteroid_rl.paths import ASSETS_DIR
+
+_HEIGHTMAP_PATH = os.path.join(ASSETS_DIR, "Itokawa", "surface_heightmap.npz")
 
 # Nominal asteroid body pose matching ``assets/sat_ast_landing.xml``.
 ASTEROID_BODY_POSITION = np.array([0.0, 0.0, -150.0], dtype=np.float64)

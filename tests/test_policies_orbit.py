@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from asteroid_rl.policies import scripted_action, scripted_orbit_action
+from asteroid_rl.control.policies import scripted_action, scripted_orbit_action
 
 
 def test_scripted_action_shape_and_bounds():
@@ -72,7 +72,7 @@ def test_scripted_orbit_terminal_corridor_uses_landing_throttle():
 
 
 def test_scripted_autonomous_acquire_low_throttle():
-    from asteroid_rl.policies import scripted_autonomous_action
+    from asteroid_rl.control.policies import scripted_autonomous_action
 
     obs = np.array(
         [100.0, 0.0, 50.0, 0.0, 0.0, 0.0, 80.0, 0.0, 0.0], dtype=np.float32

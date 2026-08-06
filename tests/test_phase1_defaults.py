@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from asteroid_rl.env import LandingEnvConfig
+from asteroid_rl.environment.gym_env import LandingEnvConfig
 
 
 def test_phase1_defaults_unchanged():

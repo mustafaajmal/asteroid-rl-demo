@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from asteroid_rl.observations import (
+from asteroid_rl.environment.observations import (
     encode_agent_observation,
     observation_dim,
     pack_orbital_vector,

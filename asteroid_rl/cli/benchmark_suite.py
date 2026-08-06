@@ -13,9 +13,9 @@ from typing import Any, Dict, List, Optional
 
 from stable_baselines3 import PPO
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.episode import ensure_dirs, run_episode
-from asteroid_rl.policies import make_action_fn
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.environment.episode import ensure_dirs, run_episode
+from asteroid_rl.control.policies import make_action_fn
 
 
 def parse_args() -> Namespace:
@@ -147,7 +147,7 @@ def main() -> None:
             if model is not None:
                 # Only evaluate PPO when obs_mode matches the trained space.
                 trained_dim = int(model.observation_space.shape[0])
-                from asteroid_rl.observations import observation_dim
+                from asteroid_rl.environment.observations import observation_dim
 
                 if observation_dim(obs_mode) != trained_dim:
                     print(

@@ -12,8 +12,8 @@ import argparse
 
 import numpy as np
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.policies import scripted_orbit_action
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.control.policies import scripted_orbit_action
 
 
 def _run_mode(mode: str, steps: int = 3) -> None:

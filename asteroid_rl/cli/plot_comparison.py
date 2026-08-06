@@ -13,8 +13,8 @@ from argparse import Namespace
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from asteroid_rl.episode import ensure_dirs
-from asteroid_rl.plotting import plot_metric_vs_time
+from asteroid_rl.environment.episode import ensure_dirs
+from asteroid_rl.analysis.plotting import plot_metric_vs_time
 
 
 METRICS = ["distance", "speed", "throttle", "reward"]

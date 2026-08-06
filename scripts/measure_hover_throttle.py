@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.policies import scripted_autonomous_action
-from asteroid_rl.pointing import local_up_N, thruster_up_tilt_deg
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.control.policies import scripted_autonomous_action
+from asteroid_rl.dynamics.pointing import local_up_N, thruster_up_tilt_deg
 
 
 def measure_hover(seed: int = 80) -> None:

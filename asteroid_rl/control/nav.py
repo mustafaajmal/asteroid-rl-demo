@@ -38,7 +38,7 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from asteroid_rl.pointing import local_up_N, thruster_up_tilt_deg, unit
+from asteroid_rl.dynamics.pointing import local_up_N, thruster_up_tilt_deg, unit
 
 
 def estimate_nav_from_truth(

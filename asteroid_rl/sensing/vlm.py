@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from asteroid_rl.perception import build_perception_stub
+from asteroid_rl.sensing.perception import build_perception_stub
 
 DEFAULT_VLM_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 

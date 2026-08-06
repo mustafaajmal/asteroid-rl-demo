@@ -5,9 +5,9 @@ from __future__ import annotations
 import pandas as pd
 from stable_baselines3 import PPO
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.episode import run_episode
-from asteroid_rl.policies import make_action_fn
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.environment.episode import run_episode
+from asteroid_rl.control.policies import make_action_fn
 
 
 def main() -> None:

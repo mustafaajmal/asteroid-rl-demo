@@ -24,16 +24,17 @@ Before coding on this repo:
 ## Current state (edit in place)
 
 - **Repo role:** Phase-1 fixed-site + Phase-2 orbital + **Phase-3 autonomous** (mission FSM + upright gate + scenic∪orbit starts).
-- **Package root:** `asteroid_rl/` at repo root (not `src/`).
+- **Package layout (2026-08-06):** `asteroid_rl/{environment,dynamics,control,sensing,adapters,analysis,cli}` (+ `paths.py`). Public imports e.g. `asteroid_rl.environment.gym_env`.
 - **Success metric:** alt/speed/lateral; autonomous also requires **tilt ≤ success_tilt_deg** when `require_upright`.
 - **PPO Phase-1:** `outputs/best_model_truth_mesh_fixed/best_model.zip`.
 - **PPO orbital:** prefer `outputs/best_model_orbital/best_model.zip` (~16.7% approach land without upright gate).
 - **Upright GNC (2026-08-06):** Sensors are **not** the bottleneck (privileged `r,v,σ` already available). Root bugs were thruster-vs-up axis, underpowered thrust, **fixed pad-level hover under central-g**, and **look-at-pad settle tilt**. Scripted autonomous approach+upright now **~62.5%** `safe_landing` (was ~0–12%).
 - **PPO autonomous:** 200k train **in progress** (`logs/train_autonomous_upright_200k.log`, 20-ep BC from improved expert) → prefer new `outputs/best_model_autonomous/best_model.zip` when done.
 - **Mission FSM:** search → acquire → divert → upright (near approaches auto-commit divert).
-- **Tests:** upright/hover + related **19** unit tests green; full suite TBD after train.
+- **Tests:** **35** pytest + Phase-1/`--orbital` smoke green after reorg.
 - **Vizard:** Windows save-file default.
 - **Hardware:** home PC long trains.
+- **Removed:** `vendor/` (old Basilisk reference scenario), stale `WORK_SUMMARY.md`. Kept `examples/` (bskExamples dump / asset fallback) with `examples/README.md`.
 
 ---
 
@@ -44,6 +45,7 @@ Before coding on this repo:
 - [ ] Retarget success/reward to mission candidate site after upright divert works.
 - [ ] Optional later: wire real Basilisk `imuSensor` / `starTracker` / `reactionWheels` (realism, not unlock).
 - [ ] Mesh after flat autonomous is solid; VLM play with `--perception vlm --camera`.
+- [ ] Optional: delete or gitignore bulky `examples/` once confident `assets/` alone is enough.
 - [ ] Optional real Scenic package later; full `bsk_rl` still optional.
 
 ---
@@ -252,6 +254,27 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 - **Runs:** scripted approach+upright **15/24 = 62.5%** safe_landing (`outputs/eval_upright_scripted_localup.json`). Stopped stale 150k train; started **200k + 20-ep BC** → `logs/train_autonomous_upright_200k.log`.
 - **Gotchas:** Under central gravity, hover throttle **must** track `µ/r²`. Look-at-pad near overhead is almost never upright.
 - **Next:** Eval PPO best zip when 200k finishes; optional RW later.
+
+---
+
+### 2026-08-06 — Package reorg into descriptive subfolders
+
+- **Prompt / goal:** Organize codebase into proper folders; delete unused/deprecated carefully; descriptive directory names. Scope: careful (CLI entrypoints preserved; no aggressive deletions beyond chosen items).
+- **Changes:**
+  - Split flat `asteroid_rl/*.py` into:
+    - `environment/` — `gym_env.py` (was `env.py`), `episode`, `observations`, `surface`
+    - `dynamics/` — `gravity`, `pointing`, `orbit_reset`, `scenic_reset`
+    - `control/` — `policies`, `mission`, `nav`, `imitate`
+    - `sensing/` — `camera`, `perception`, `vlm`
+    - `adapters/` — `bsk_rl_api`
+    - `analysis/` — `plotting`
+  - Added `asteroid_rl/paths.py` for assets/examples resolution (nesting-safe).
+  - Kept `asteroid_rl.cli.*` module paths unchanged (`python -m asteroid_rl.cli.play`, etc.).
+  - Deleted `vendor/` and stale `WORK_SUMMARY.md`. Kept `examples/` with explanatory README (asset fallback only).
+  - Updated README + AGENTS repository maps / import guidance.
+- **Runs:** `pytest tests/ -q` → **35 passed**; `smoke_test` + `smoke_test --orbital` OK.
+- **Gotchas:** Do not recreate flat top-level module names that collide with new package dirs. Prefer `from asteroid_rl.environment.gym_env import …`.
+- **Next:** Resume autonomous train eval thread; optionally prune `examples/` later.
 
 ---
 

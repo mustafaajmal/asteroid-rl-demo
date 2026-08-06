@@ -20,16 +20,16 @@ from argparse import Namespace
 
 from stable_baselines3 import PPO
 
-from asteroid_rl.camera import launch_vizard_load_file
-from asteroid_rl.env import (
+from asteroid_rl.sensing.camera import launch_vizard_load_file
+from asteroid_rl.environment.gym_env import (
     AsteroidLandingEnv,
     LandingEnvConfig,
     _find_vizard_app,
     default_viz_bin_path,
     resolve_viz_mode,
 )
-from asteroid_rl.episode import ensure_dirs, run_episode
-from asteroid_rl.policies import make_action_fn
+from asteroid_rl.environment.episode import ensure_dirs, run_episode
+from asteroid_rl.control.policies import make_action_fn
 
 
 def parse_args() -> Namespace:

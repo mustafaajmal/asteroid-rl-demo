@@ -14,9 +14,9 @@ from argparse import Namespace
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 
-from asteroid_rl.env import AsteroidLandingEnv, LandingEnvConfig
-from asteroid_rl.episode import ensure_dirs
-from asteroid_rl.imitate import warmstart_from_scripted
+from asteroid_rl.environment.gym_env import AsteroidLandingEnv, LandingEnvConfig
+from asteroid_rl.environment.episode import ensure_dirs
+from asteroid_rl.control.imitate import warmstart_from_scripted
 
 
 def parse_args() -> Namespace:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from asteroid_rl.mission import (
+from asteroid_rl.control.mission import (
     MissionConfig,
     MissionState,
     mission_pointing_command,

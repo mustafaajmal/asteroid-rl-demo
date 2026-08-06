@@ -13,12 +13,12 @@ import numpy as np
 
 from Basilisk.utilities import RigidBodyKinematics as rbk
 
-from asteroid_rl.camera import (
+from asteroid_rl.sensing.camera import (
     DEFAULT_CAMERA_FOV_DEG,
     DEFAULT_CAMERA_POS_B,
     DEFAULT_CAMERA_SIGMA_CB,
 )
-from asteroid_rl.surface import get_surface_map
+from asteroid_rl.environment.surface import get_surface_map
 
 
 def _clamp01(value: float) -> float:
