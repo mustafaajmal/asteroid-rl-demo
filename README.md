@@ -103,3 +103,64 @@ PYTHONPATH=. python -m asteroid_rl.cli.smoke_test
 
 Prefer EvalCallback **best** checkpoints under `outputs/best_model_*/best_model.zip`
 over final training zips when demoing.
+
+---
+
+## Running episodes
+
+Commands assume the venv is active and you are at the repo root.
+Omit `--viz` for headless playback (default). Add `--viz` to open Vizard.
+
+Checkpoint zips are gitignored — they must exist under `outputs/` on this machine
+(or be downloaded / trained first).
+
+### Phase-1 (fixed-site soft landing)
+
+Constant gravity, 1-D throttle. Prefer the mesh **best** zip over older final zips.
+
+```bash
+# Scripted — headless
+PYTHONPATH=. python -m asteroid_rl.cli.play --policy scripted
+
+# Scripted — Vizard
+PYTHONPATH=. python -m asteroid_rl.cli.play --policy scripted --viz
+
+# Trained PPO — headless
+PYTHONPATH=. python -m asteroid_rl.cli.play --policy ppo \
+  --model outputs/best_model_mesh_fixed/best_model.zip
+
+# Trained PPO — Vizard
+PYTHONPATH=. python -m asteroid_rl.cli.play --policy ppo \
+  --model outputs/best_model_mesh_fixed/best_model.zip --viz
+```
+
+### Autonomous (~200k PPO, upright gate)
+
+Central gravity, mission FSM, upright soft-land. Use the autonomous **best** zip
+from the 200k train (`outputs/best_model_autonomous/best_model.zip`).
+
+```bash
+# Scripted expert — headless
+PYTHONPATH=. python -m asteroid_rl.cli.play --policy scripted_autonomous --autonomous
+
+# Scripted expert — Vizard
+PYTHONPATH=. python -m asteroid_rl.cli.play --policy scripted_autonomous --autonomous --viz
+
+# Trained PPO (~200k best) — headless
+PYTHONPATH=. python -m asteroid_rl.cli.play --policy ppo --autonomous \
+  --model outputs/best_model_autonomous/best_model.zip
+
+# Trained PPO (~200k best) — Vizard
+PYTHONPATH=. python -m asteroid_rl.cli.play --policy ppo --autonomous \
+  --model outputs/best_model_autonomous/best_model.zip --viz
+```
+
+Multi-episode eval (headless) without opening Vizard:
+
+```bash
+PYTHONPATH=. python -m asteroid_rl.cli.evaluate --policy ppo \
+  --model outputs/best_model_mesh_fixed/best_model.zip --episodes 8
+
+PYTHONPATH=. python -m asteroid_rl.cli.evaluate_autonomous --policy ppo \
+  --model outputs/best_model_autonomous/best_model.zip --episodes 8
+```
