@@ -302,3 +302,12 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 - **Gotchas:** …
 - **Next:** …
 ```
+
+### 2026-08-12 — Seamless Basilisk/Scenic polish + env shim
+
+- **Prompt / goal:** Away-from-desk integration pass vs MuJoCo Scenic feel; push with handoff MD.
+- **Scenic:** live angularVelocity; `param timestep` / `asteroid_rl_root`; altitude_brake + record examples; HANDOFF.md; tests (8 passed).
+- **asteroid_rl:** `asteroid_rl/env.py` compat shim → `environment.gym_env` (reorg).
+- **Gotcha:** Planning PDF not found on this machine; followed MuJoCo/Webots patterns + diary.
+- **Next:** scenic_reset → real Scenic generate(); surface-relative altitude.
+
