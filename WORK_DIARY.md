@@ -29,18 +29,20 @@ Before coding on this repo:
 - **PPO Phase-1:** `outputs/best_model_truth_mesh_fixed/best_model.zip`.
 - **PPO orbital:** prefer `outputs/best_model_orbital/best_model.zip` (~16.7% approach land without upright gate).
 - **Upright GNC (2026-08-06):** Sensors are **not** the bottleneck (privileged `r,v,σ` already available). Root bugs were thruster-vs-up axis, underpowered thrust, **fixed pad-level hover under central-g**, and **look-at-pad settle tilt**. Scripted autonomous approach+upright now **~62.5%** `safe_landing` (was ~0–12%).
-- **PPO autonomous:** 200k train **in progress** (`logs/train_autonomous_upright_200k.log`, 20-ep BC from improved expert) → prefer new `outputs/best_model_autonomous/best_model.zip` when done.
+- **PPO autonomous:** 200k train **finished**. Release: https://github.com/mustafaajmal/asteroid-rl-demo/releases/tag/autonomous-upright-200k-20260806-1235 (`best_model.zip` + final). Prefer best zip for eval/play.
 - **Mission FSM:** search → acquire → divert → upright (near approaches auto-commit divert).
 - **Tests:** **35** pytest + Phase-1/`--orbital` smoke green after reorg.
-- **Vizard:** Windows save-file default.
+- **Vizard:** Windows save-file default; `_setup_vizard` accepts procedural model/texture/scale overrides.
 - **Hardware:** home PC long trains.
 - **Removed:** `vendor/` (old Basilisk reference scenario), stale `WORK_SUMMARY.md`. Kept `examples/` (bskExamples dump / asset fallback) with `examples/README.md`.
+- **Scenic:** sister `../Scenic` branch `basilisk-simulator` — stock Itokawa **and** Mars-style **procedural** asteroid (bumps/craters/ridges + albedo each sample).
 
 ---
 
 ## Open threads (edit in place)
 
-- [ ] Finish 200k train; eval best zip with upright gate (target ≥ scripted ~60%).
+- [ ] Eval 200k best zip with upright gate on approach (scripted was ~62.5%; compare PPO).
+- [ ] Wire asteroid_rl `scenic_reset` to real Scenic `ProceduralAsteroid` / random approach (sister Scenic still holds the interface).
 - [ ] Trim remaining ~5–7 m hover timeouts / rare escapes in scripted settle.
 - [ ] Retarget success/reward to mission candidate site after upright divert works.
 - [ ] Optional later: wire real Basilisk `imuSensor` / `starTracker` / `reactionWheels` (realism, not unlock).
@@ -275,6 +277,16 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 - **Runs:** `pytest tests/ -q` → **35 passed**; `smoke_test` + `smoke_test --orbital` OK.
 - **Gotchas:** Do not recreate flat top-level module names that collide with new package dirs. Prefer `from asteroid_rl.environment.gym_env import …`.
 - **Next:** Resume autonomous train eval thread; optionally prune `examples/` later.
+
+### 2026-08-12 — Scenic ↔ Basilisk interface (sister Scenic fork)
+
+- **Prompt / goal:** Fully connect Scenic to Basilisk (not nested repo). Use MuJoCo PR #433 as pattern. Branch not master; fork OK.
+- **Layout:** `Desktop/Research/Scenic` (sister of `asteroid-rl-demo`). Fork `mustafaajmal/Scenic`, branch **`basilisk-simulator`**.
+- **Implemented (Scenic):** Basilisk simulator package + examples + tests; procedural asteroid (bumps/craters/ridges + albedo).
+- **Push:** https://github.com/mustafaajmal/Scenic/tree/basilisk-simulator
+- **asteroid_rl:** `_setup_vizard` model/texture/scale overrides for procedural meshes (`environment/gym_env.py`).
+- **Gotchas:** After package reorg, Scenic must import `asteroid_rl.environment.gym_env` (not `asteroid_rl.env`).
+- **Next:** Wire `scenic_reset` to real Scenic scene generation.
 
 ---
 

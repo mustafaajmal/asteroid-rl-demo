@@ -1486,6 +1486,9 @@ def _setup_vizard(
     camera_render_rate_sec: float = 0.25,
     viz_mode: str = "live",
     viz_save_file: str = "",
+    viz_asteroid_model_path: Optional[str] = None,
+    viz_asteroid_texture_path: Optional[str] = None,
+    viz_asteroid_scale: Optional[float] = None,
 ):
     """Attach Vizard, optional thruster HUD, and optional Basilisk instrument camera.
 
@@ -1504,6 +1507,14 @@ def _setup_vizard(
         camera_render_rate_sec: Image request period in seconds.
         viz_mode: ``live`` (ZeroMQ) or ``file`` (record ``.bin``).
         viz_save_file: Destination ``.bin`` path when ``viz_mode=file``.
+        viz_asteroid_model_path: Optional override for the Vizard asteroid OBJ.
+            Defaults to stock Itokawa. Procedural Scenic meshes should pass their
+            generated OBJ here (already in meters → use ``viz_asteroid_scale=1``).
+        viz_asteroid_texture_path: Optional texture override. ``None`` keeps the
+            stock Itokawa grayscale; ``""`` disables a custom texture (useful for
+            procedural meshes without matching UVs).
+        viz_asteroid_scale: Uniform Vizard model scale. Defaults to
+            ``ASTEROID_VIZ_SCALE`` (1000) for the stock Itokawa OBJ units.
 
     Returns:
         Tuple ``(viz, thruster_viz_writer, camera_mod, viz_bin_path)`` for
@@ -1568,16 +1579,24 @@ def _setup_vizard(
     viz.settings.spacecraftShadowBrightness = 0.07
 
     asteroid_geom = _get_body_geom_info(scene, ASTEROID_BODY_NAME)
+    model_path = viz_asteroid_model_path or AST_OBJ_PATH
+    model_scale = float(
+        ASTEROID_VIZ_SCALE if viz_asteroid_scale is None else viz_asteroid_scale
+    )
     custom_kwargs = dict(
-        modelPath=AST_OBJ_PATH,
+        modelPath=model_path,
         simBodiesToModify=[ASTEROID_BODY_NAME],
-        scale=[ASTEROID_VIZ_SCALE, ASTEROID_VIZ_SCALE, ASTEROID_VIZ_SCALE],
+        scale=[model_scale, model_scale, model_scale],
         offset=list(asteroid_geom.pos),
         rotation=list(rbk.EP2Euler321(list(asteroid_geom.quat))),
         shader=1,
     )
-    if AST_TEXTURE_PATH:
-        custom_kwargs["customTexturePath"] = AST_TEXTURE_PATH
+    # None → stock Itokawa texture; "" → no custom texture (procedural meshes).
+    if viz_asteroid_texture_path is None:
+        if AST_TEXTURE_PATH:
+            custom_kwargs["customTexturePath"] = AST_TEXTURE_PATH
+    elif viz_asteroid_texture_path:
+        custom_kwargs["customTexturePath"] = viz_asteroid_texture_path
     vizSupport.createCustomModel(viz, **custom_kwargs)
 
     camera_mod = None
