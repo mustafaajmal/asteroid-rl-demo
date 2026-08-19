@@ -618,7 +618,25 @@ class AsteroidLandingEnv(gym.Env):
             mode="search" if self._mission_cfg.enabled else "land"
         )
 
-        if self.handles is None or not self.config.reuse_sim:
+        # Scenic procedural rocks must rebuild MuJoCo each episode (mesh changes).
+        use_procedural = (
+            bool(self.config.scenic_scenario_path)
+            and getattr(self, "_scenic_mesh", None) is not None
+            and getattr(self, "_scenic_asteroid_pos", None) is not None
+        )
+        if use_procedural:
+            from asteroid_rl.environment.procedural_sim import build_procedural_sim
+
+            self.handles = build_procedural_sim(
+                self.config,
+                craft_position_N=initial_position,
+                craft_velocity_N=initial_velocity,
+                asteroid_position_N=self._scenic_asteroid_pos,
+                mesh=self._scenic_mesh,
+                craft_sigma_BN=self._scenic_sigma,
+                landing_site_N=self.config.target_position_N,
+            )
+        elif self.handles is None or not self.config.reuse_sim:
             self.handles = build_sim(
                 self.config,
                 initial_position_N=initial_position,

@@ -326,3 +326,10 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 - Gym: bake heightmap + keep mesh for raycast altitude on scenic resets; train_scenic_curriculum CLI added.
 - Gap: Gym MuJoCo geometry still stock — need build_procedural in Gym reset for real train-on-bumps.
 
+
+### 2026-08-19 — Close Gym procedural physics gap
+
+- Added `procedural_sim.build_procedural_sim`; Gym scenic resets rebuild MuJoCo from Scenic mesh.
+- Smoke: altitude 140→24 on procedural OBJ; curriculum train sphere 75% / ellipsoid 0–25% / bumpy 25–50%.
+- User action: none required for MINIMUM — see Scenic RESULTS.md.
+

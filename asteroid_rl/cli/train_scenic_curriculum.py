@@ -70,14 +70,16 @@ def main() -> None:
     train_cfg = LandingEnvConfig(
         seed=args.seed,
         scenic_scenario_path=str(train_scen.resolve()),
-        use_flat_surface=True,  # overwritten when heightmap is baked
+        use_flat_surface=False,
         obs_mode="truth",
         auto_point=True,
         enable_viz=False,
-        reuse_sim=True,
+        reuse_sim=False,  # procedural mesh rebuilds every episode
         success_speed=3.5,
         success_altitude=8.0,
         min_success_altitude=0.3,
+        success_lateral=40.0,
+        time_limit=120.0,
     )
     env = AsteroidLandingEnv(config=train_cfg)
     model = PPO(
@@ -110,7 +112,7 @@ def main() -> None:
                 cfg = LandingEnvConfig(
                     seed=args.seed + i,
                     scenic_scenario_path=str(scen.resolve()),
-                    use_flat_surface=True,
+                    use_flat_surface=False,
                     obs_mode="truth",
                     auto_point=True,
                     enable_viz=False,
@@ -118,6 +120,8 @@ def main() -> None:
                     success_speed=3.5,
                     success_altitude=8.0,
                     min_success_altitude=0.3,
+                    success_lateral=40.0,
+                    time_limit=120.0,
                 )
                 ev = AsteroidLandingEnv(config=cfg)
                 ep = run_episode(
