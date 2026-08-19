@@ -10,6 +10,7 @@ import argparse
 import csv
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from stable_baselines3 import PPO
@@ -169,7 +170,11 @@ def main() -> None:
     )
 
     if args.open_last and last_bin and os.path.isfile(last_bin):
-        launch_vizard_load_file(last_bin, find_app_fn=_find_vizard_app)
+        launch_vizard_load_file(
+            last_bin,
+            find_app_fn=_find_vizard_app,
+            popen_fn=subprocess.Popen,
+        )
 
 
 if __name__ == "__main__":
