@@ -143,9 +143,14 @@ def sample_scenic_scenario_start(
         sigma = None
 
     meta: Dict[str, Any] = {"scenario": str(path.resolve()), "seed_note": "scenic.generate"}
+    asteroid_obj = None
+    bumps = []
+    craters = []
+    ridges = []
     for obj in scene.objects:
         kind = getattr(obj, "basiliskKind", None)
         if kind == "procedural_asteroid":
+            asteroid_obj = obj
             meta["asteroid"] = {
                 "position": (
                     float(obj.position.x),
@@ -159,6 +164,99 @@ def sample_scenic_scenario_start(
                 ),
                 "detailSeed": float(getattr(obj, "detailSeed", 0.0)),
                 "noiseAmp": float(getattr(obj, "noiseAmp", 0.0)),
+                "subdivisions": int(getattr(obj, "subdivisions", 2)),
             }
-            break
+        elif kind == "asteroid_bump":
+            bumps.append(obj)
+        elif kind == "asteroid_crater":
+            craters.append(obj)
+        elif kind == "asteroid_ridge":
+            ridges.append(obj)
+
+    # Bake a top-down heightmap so Gym reward/obs can use real irregular terrain.
+    if asteroid_obj is not None:
+        try:
+            from scenic.simulators.basilisk.asteroid_mesh import (
+                BumpSpec,
+                CraterSpec,
+                RidgeSpec,
+                bake_heightmap_npz,
+                generate_asteroid_mesh,
+            )
+
+            ast = meta["asteroid"]
+            ast_pos = np.array(ast["position"], dtype=np.float64)
+
+            def _rel(o):
+                return (
+                    float(o.position.x) - float(ast_pos[0]),
+                    float(o.position.y) - float(ast_pos[1]),
+                    float(o.position.z) - float(ast_pos[2]),
+                )
+
+            bump_specs = [
+                BumpSpec(
+                    center=_rel(b),
+                    height=float(getattr(b, "bumpHeight", 5.0)),
+                    spread=float(getattr(b, "spread", 10.0)),
+                )
+                for b in bumps
+            ]
+            crater_specs = [
+                CraterSpec(
+                    center=_rel(c),
+                    depth=float(getattr(c, "craterDepth", 5.0)),
+                    radius=float(getattr(c, "craterRadius", 8.0)),
+                    rim_height=float(getattr(c, "rimHeight", 2.0)),
+                )
+                for c in craters
+            ]
+            ridge_specs = []
+            for r in ridges:
+                d = getattr(r, "ridgeDir", (1.0, 0.0, 0.0))
+                if hasattr(d, "x"):
+                    direction = (float(d.x), float(d.y), float(d.z))
+                else:
+                    direction = (float(d[0]), float(d[1]), float(d[2]))
+                ridge_specs.append(
+                    RidgeSpec(
+                        center=_rel(r),
+                        direction=direction,
+                        height=float(getattr(r, "ridgeHeight", 6.0)),
+                        length=float(getattr(r, "ridgeLength", 20.0)),
+                        width=float(getattr(r, "ridgeWidth", 5.0)),
+                    )
+                )
+            mesh = generate_asteroid_mesh(
+                radii=ast["radii"],
+                bumps=bump_specs,
+                craters=crater_specs,
+                ridges=ridge_specs,
+                subdivisions=int(ast.get("subdivisions", 2)),
+                noise_amp=float(ast.get("noiseAmp", 0.0)),
+                noise_seed=int(float(ast.get("detailSeed", 0.0)) % 1_000_000_007),
+            )
+            H, xmin, ymin, res = bake_heightmap_npz(
+                mesh, asteroid_world=ast_pos, res=2.0
+            )
+            meta["heightmap"] = {
+                "H": H,
+                "xmin": xmin,
+                "ymin": ymin,
+                "res": res,
+            }
+            meta["mesh"] = mesh
+            # Suggested landing site: surface under asteroid XY.
+            ix = int(np.clip(round((float(ast_pos[0]) - xmin) / res), 0, H.shape[1] - 1))
+            iy = int(np.clip(round((float(ast_pos[1]) - ymin) / res), 0, H.shape[0] - 1))
+            site_z = float(H[iy, ix])
+            if np.isfinite(site_z):
+                meta["landing_site"] = (
+                    float(ast_pos[0]),
+                    float(ast_pos[1]),
+                    site_z,
+                )
+        except Exception as exc:
+            meta["heightmap_error"] = str(exc)
+
     return pos, vel, sigma, meta

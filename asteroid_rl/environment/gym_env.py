@@ -995,6 +995,7 @@ class AsteroidLandingEnv(gym.Env):
             )
             self._scenic_sigma = sigma
             self._last_scenic_meta = meta
+            self._apply_scenic_terrain(meta)
             return position, velocity
         if self.config.scenic_like_randomize:
             position, velocity, sigma = scenic_like_or_default(
@@ -1122,17 +1123,53 @@ class AsteroidLandingEnv(gym.Env):
             ) from exc
         return r, v
 
+    def _apply_scenic_terrain(self, meta: dict) -> None:
+        """Swap in a Scenic-baked heightmap so altitude/reward see irregular rock."""
+        from asteroid_rl.environment.surface import SurfaceMap
+
+        self._scenic_mesh = (meta or {}).get("mesh")
+        self._scenic_asteroid_pos = None
+        ast = (meta or {}).get("asteroid") or {}
+        if "position" in ast:
+            self._scenic_asteroid_pos = np.array(ast["position"], dtype=np.float64)
+            self.config.asteroid_com_N = tuple(float(x) for x in ast["position"])
+
+        hm = (meta or {}).get("heightmap")
+        if hm:
+            self.surface = SurfaceMap.from_grid(
+                hm["H"],
+                xmin=float(hm["xmin"]),
+                ymin=float(hm["ymin"]),
+                res=float(hm["res"]),
+            )
+            self.config.use_flat_surface = False
+        site = (meta or {}).get("landing_site")
+        if site is not None and len(site) == 3:
+            self.config.target_position_N = (
+                float(site[0]),
+                float(site[1]),
+                float(site[2]),
+            )
+
     def _altitude_above_terrain(self, position_N: np.ndarray) -> float:
         """Hub altitude above the active terrain model.
 
-        Args:
-            position_N: Hub inertial position, meters.
-
-        Returns:
-            Altitude in meters (flat plane, Itokawa heightmap, or radial shell
-            when outside the heightmap during orbital flight).
+        Prefers Scenic mesh raycast when a procedural rock was sampled.
         """
         p = np.asarray(position_N, dtype=np.float64).reshape(3)
+        mesh = getattr(self, "_scenic_mesh", None)
+        ast = getattr(self, "_scenic_asteroid_pos", None)
+        if mesh is not None and ast is not None:
+            try:
+                from scenic.simulators.basilisk.asteroid_mesh import world_surface_altitude
+
+                return float(
+                    world_surface_altitude(
+                        mesh, craft_world=p, asteroid_world=ast, fallback=None
+                    )
+                )
+            except Exception:
+                pass
         if self.config.use_flat_surface:
             return float(p[2] - self.config.flat_surface_z)
         if str(self.config.gravity_mode).lower() == "central" or self.config.orbital_reset:
@@ -1144,7 +1181,11 @@ class AsteroidLandingEnv(gym.Env):
                         site_N=self.config.target_array(),
                     )
                 )
-        return float(self.surface.altitude(p))
+        alt = float(self.surface.altitude(p))
+        # Sentinel from empty heightmap cells (~1e6) → fall back to radial shell.
+        if alt > 1.0e5 and ast is not None:
+            return float(np.linalg.norm(p - ast) - 40.0)
+        return alt
 
     def _get_truth_vector(self) -> np.ndarray:
         """Build the clean privileged 5-D state used for reward / termination.

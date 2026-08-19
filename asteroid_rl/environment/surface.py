@@ -129,6 +129,24 @@ class SurfaceMap:
         """
         return np.array([float(x), float(y), self.surface_z(x, y)], dtype=np.float64)
 
+    @classmethod
+    def from_grid(
+        cls,
+        H: np.ndarray,
+        *,
+        xmin: float,
+        ymin: float,
+        res: float,
+    ) -> "SurfaceMap":
+        """Build a ``SurfaceMap`` from an in-memory height grid (no NPZ file)."""
+        obj = cls.__new__(cls)
+        obj.H = np.asarray(H, dtype=np.float64)
+        obj.xmin = float(xmin)
+        obj.ymin = float(ymin)
+        obj.res = float(res)
+        obj.ny, obj.nx = obj.H.shape
+        return obj
+
 
 @lru_cache(maxsize=1)
 def get_surface_map() -> SurfaceMap:

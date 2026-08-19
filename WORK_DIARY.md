@@ -319,3 +319,10 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 - **Smoke:** sphere 5/5, ellipsoid 4/5, bumpy 5/5 safe (seed 11).
 - **Next:** bake procedural heightmap into Gym SurfaceMap for train-on-bumps; PPO-vs-Scenic if zip available.
 
+
+### 2026-08-19 — Dual-metric Scenic results + Gym mesh-radar altitude
+
+- Scenic sweep: sphere/ellipsoid 100% reach / 0% soft; bumpy 67% reach+soft (mean spd 1.75 vs ~3.1).
+- Gym: bake heightmap + keep mesh for raycast altitude on scenic resets; train_scenic_curriculum CLI added.
+- Gap: Gym MuJoCo geometry still stock — need build_procedural in Gym reset for real train-on-bumps.
+
