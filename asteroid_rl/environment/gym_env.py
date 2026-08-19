@@ -64,7 +64,10 @@ from asteroid_rl.dynamics.pointing import (
     mrp_point_boresight_at,
     thruster_up_tilt_deg,
 )
-from asteroid_rl.dynamics.scenic_reset import scenic_like_or_default
+from asteroid_rl.dynamics.scenic_reset import (
+    sample_scenic_scenario_start,
+    scenic_like_or_default,
+)
 from asteroid_rl.environment.surface import default_landing_site, get_surface_map
 from asteroid_rl.paths import ASSETS_DIR, EXAMPLES_DATA, EXAMPLES_MUJOCO
 from asteroid_rl.sensing.vlm import DEFAULT_VLM_MODEL, PerceptionBackend
@@ -341,6 +344,8 @@ class LandingEnvConfig:
     point_every_step: bool = False
     light_randomize: bool = False
     scenic_like_randomize: bool = False
+    # Real Scenic `.scenic` path: each reset calls generate() for craft ICs.
+    scenic_scenario_path: str = ""
 
     # Perception source for info["perception"] / obs_mode=perception features.
     perception_backend: str = "geometry"
@@ -549,6 +554,7 @@ class AsteroidLandingEnv(gym.Env):
         super().__init__()
         self.config = (config or LandingEnvConfig()).apply_light_randomize_defaults()
         self.config.obs_mode = validate_obs_mode(self.config.obs_mode)
+        self._last_scenic_meta: dict = {}
         self.handles: Optional[SimHandles] = None
         self._np_random: Optional[np.random.Generator] = None
         self.surface = get_surface_map()
@@ -981,6 +987,14 @@ class AsteroidLandingEnv(gym.Env):
                 velocity = np.array([0.0, 0.0, -1.0], dtype=np.float64)
                 sigma = np.zeros(3, dtype=np.float64)
             self._scenic_sigma = sigma
+            return position, velocity
+        if self.config.scenic_scenario_path:
+            position, velocity, sigma, meta = sample_scenic_scenario_start(
+                self.config.scenic_scenario_path,
+                params={"enable_viz": False},
+            )
+            self._scenic_sigma = sigma
+            self._last_scenic_meta = meta
             return position, velocity
         if self.config.scenic_like_randomize:
             position, velocity, sigma = scenic_like_or_default(

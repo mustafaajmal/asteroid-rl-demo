@@ -311,3 +311,11 @@ python -m asteroid_rl.cli.train_ppo --timesteps 200000 --device cpu --seed 0
 - **Gotcha:** Planning PDF not found on this machine; followed MuJoCo/Webots patterns + diary.
 - **Next:** scenic_reset → real Scenic generate(); surface-relative altitude.
 
+
+### 2026-08-19 — MINIMUM Scenic policy eval + mesh radar altitude
+
+- **Gap:** Were ~70% to MINIMUM (eval fixed policy on Scenic scenarios). Missing: real surface altitude, scenic_reset→generate, curriculum harness.
+- **Done:** mesh raycast altitude in Scenic; curriculum sphere/ellipsoid/bumpy; `run_scenic_policy_eval.py`; Gym `scenic_scenario_path` + `evaluate_scenic` CLI; ARCHITECTURE.md / HANDOFF.
+- **Smoke:** sphere 5/5, ellipsoid 4/5, bumpy 5/5 safe (seed 11).
+- **Next:** bake procedural heightmap into Gym SurfaceMap for train-on-bumps; PPO-vs-Scenic if zip available.
+
